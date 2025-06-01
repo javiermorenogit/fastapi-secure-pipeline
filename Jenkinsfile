@@ -101,3 +101,97 @@ stage('Unit Tests') {
     }
   }
 }
+pipeline {
+    agent any            // el nodo Jenkins por defecto
+
+    environment {
+        IMAGE_NAME = "javiermorenogit/fastapi-secure-pipeline"
+    }
+
+    stages {
+
+        /* ---------- 1 · Lint ---------- */
+        stage('Lint') {
+            agent {
+                docker {
+                    image 'python:3.11-slim'
+                    args  '-u root'          // para que pip pueda escribir
+                }
+            }
+            steps {
+                sh '''
+                  pip install --no-cache-dir ruff
+                  ruff check app
+                '''
+            }
+        }
+
+        /* ---------- 2 · Unit Tests ---------- */
+        stage('Unit Tests') {
+            agent {
+                docker { image 'python:3.11-slim' }
+            }
+            steps {
+                sh '''
+                  pip install --no-cache-dir -r requirements.txt
+                  pip install --no-cache-dir pytest pytest-cov
+                  export PYTHONPATH=$(pwd)
+                  pytest -q --cov app --cov-fail-under=80 --junitxml reports/tests.xml
+                '''
+            }
+            post {
+                always {
+                    junit 'reports/tests.xml'
+                }
+            }
+        }
+
+        /* ---------- 3 · Dependency-Check ---------- */
+        stage('Dependency Scan') {
+            agent { docker { image 'owasp/dependency-check:latest' } }
+            steps {
+                sh '''
+                  dependency-check.sh --project "fastapi-secure-pipeline" \
+                                      --scan app \
+                                      --format XML --out reports/dep-check
+                '''
+            }
+        }
+
+        /*  … Resto de etapas: Sonar, Build Image, Trivy, Gitleaks, Deploy … */
+    }
+
+    /* ---------- Credenciales ---------- */
+    // Solo un bloque; lo puedes envolver donde las consumas
+    // Ejemplo para Sonar + Docker Hub
+    stages {
+        stage('SAST (SonarQube)') {
+            agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
+            environment {
+                SONAR_HOST_URL = 'https://sonarcloud.io'  // o tu SonarQube
+            }
+            steps {
+                withCredentials([
+                    string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')
+                ]) {
+                    sh '''
+                      sonar-scanner \
+                        -Dsonar.projectKey=fastapi-secure-pipeline \
+                        -Dsonar.sources=. \
+                        -Dsonar.host.url=$SONAR_HOST_URL \
+                        -Dsonar.login=$SONAR_TOKEN
+                    '''
+                }
+            }
+        }
+    }
+
+    /* ---------- Notificación por correo opcional ---------- */
+    post {
+        failure {
+            // *Desactiva* o configura un SMTP válido
+            // mail to: 'tu@email.com', …
+        }
+    }
+}
+
