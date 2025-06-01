@@ -83,16 +83,16 @@ stage('Dependency Scan') {
         '''
     }
 
-    post {
-        always {
-            // Ajusta aquí los umbrales si quieres fallar/instabilizar según HIGH/CRITICAL
-            dependencyCheckPublisher(
-                pattern: 'reports/dep-check/dependency-check-report.xml',
-                failedTotalCritical: 1,
-                unstableTotalHigh: 5
-            )
-        }
-    }
+post {
+  always {
+    dependencyCheckPublisher(
+      // Ahora miramos dentro de app/reports/...
+      pattern: 'app/reports/dep-check/dependency-check-report.xml',
+      failedTotalCritical: 1,
+      unstableTotalHigh: 5
+    )
+  }
+}
 }
         /* ---------- 4 · SAST (Sonar) ---------- */
 stage('SAST (Sonar)') {
@@ -105,6 +105,7 @@ stage('SAST (Sonar)') {
             sh '''
               sonar-scanner \
                 -Dsonar.projectKey=fastapi-secure-pipeline \
+                -Dsonar.organization=javiermorenogit \
                 -Dsonar.sources=. \
                 -Dsonar.host.url=$SONAR_HOST_URL \
                 -Dsonar.login=$SONAR_TOKEN
@@ -158,7 +159,7 @@ post {
         usernameVariable: 'SMTP_USER',
         passwordVariable: 'SMTP_PSW'
     ) ]) {
-      mail to: 'secops@patitosbank.com',
+      mail to: 'javiermorenog@gmail.com',
            from: "${SMTP_USER}",
            subject: "🚨 Build FAILED",
            body: "Revisa logs: ${env.BUILD_URL}"
