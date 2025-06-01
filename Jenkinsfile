@@ -1,8 +1,6 @@
-/* ───────── fastapi-secure-pipeline / Jenkinsfile ───────── */
+/* fastapi-secure-pipeline / Jenkinsfile */
 pipeline {
-    /* nodo por defecto; las stages con “agent { docker … }” lo sobreescriben */
     agent any
-
     environment {
         IMAGE_NAME = "javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
         DOCKER_BUILDKIT = '1'
@@ -10,17 +8,12 @@ pipeline {
 
     stages {
 
-        /* -------- 1. Checkout ------------------------------------------------ */
-        stage('Checkout') {
-            steps { checkout scm }
-        }
-
-        /* -------- 2. Lint ---------------------------------------------------- */
+        /* -------- 1 · Lint -------------------------- */
         stage('Lint') {
             agent {
                 docker {
                     image 'python:3.11-slim'
-                    args  '-u root'          // pip puede escribir en /usr/local
+                    args  '-u root'
                 }
             }
             steps {
@@ -31,7 +24,7 @@ pipeline {
             }
         }
 
-        /* -------- 3. Unit Tests + coverage ---------------------------------- */
+        /* -------- 2 · Unit tests + cov --------------- */
         stage('Unit Tests') {
             agent { docker { image 'python:3.11-slim' } }
             steps {
@@ -46,27 +39,35 @@ pipeline {
             post { always { junit 'reports/tests.xml' } }
         }
 
-        /* -------- 4. Dependency-Check --------------------------------------- */
-        stage('Dependency Scan') {
-            agent { docker { image 'owasp/dependency-check:latest' } }
-            steps {
-                sh '''
-                  dependency-check.sh --project "fastapi-secure-pipeline" \
-                                     --scan /workspace/app \
-                                     --format XML --out /workspace/reports/dep-check
-                '''
-            }
-            post {
-                always {
-                    dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml'
-                }
-            }
+/* ---------- 3 · Dependency-Check ---------- */
+stage('Dependency Scan') {
+    agent {
+        docker {
+            image 'owasp/dependency-check:latest'
+            args  '--entrypoint=""'          // anulamos ENTRYPOINT
         }
+    }
+    steps {
+        sh '''
+          mkdir -p reports/dep-check
+          /usr/share/dependency-check/bin/dependency-check.sh \
+            --project "fastapi-secure-pipeline" \
+            --scan "$WORKSPACE/app" \
+            --format XML --out reports/dep-check
+        '''
+    }
+    post {
+        always {
+            dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml'
+        }
+    }
+}
 
-        /* -------- 5. SAST (SonarCloud/Qube) --------------------------------- */
+
+        /* -------- 4 · SAST (Sonar) ------------------- */
         stage('SAST (Sonar)') {
             agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
-            environment { SONAR_HOST_URL = 'https://sonarcloud.io' }   // o tu URL
+            environment { SONAR_HOST_URL = 'https://sonarcloud.io' }
             steps {
                 withCredentials([string(credentialsId: 'sonar-token',
                                         variable: 'SONAR_TOKEN')]) {
@@ -81,28 +82,27 @@ pipeline {
             }
         }
 
-        /* -------- 6. Build Docker image ------------------------------------ */
+        /* -------- 5 · Build image -------------------- */
         stage('Build Image') {
             steps { sh 'docker build -t $IMAGE_NAME .' }
         }
 
-        /* -------- 7. Trivy -------------------------------------------------- */
+        /* -------- 6 · Trivy -------------------------- */
         stage('Container Scan') {
             agent { docker { image 'aquasec/trivy:latest' } }
             steps { sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME' }
         }
 
-        /* -------- 8. Gitleaks ---------------------------------------------- */
+        /* -------- 7 · Gitleaks ----------------------- */
         stage('Secrets Scan') {
             agent { docker { image 'zricethezav/gitleaks:latest' } }
             steps { sh 'gitleaks detect --source . --exit-code 1' }
         }
 
-        /* -------- 9. Push & Deploy (main) ---------------------------------- */
+        /* -------- 8 · Push & Deploy ------------------ */
         stage('Push & Deploy') {
             when { branch 'main' }
             steps {
-                /* push a Docker Hub */
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
                                                  usernameVariable: 'DOCKER_USER',
                                                  passwordVariable: 'DOCKER_PSW')]) {
@@ -112,8 +112,6 @@ pipeline {
                       docker push $DOCKER_USER/fastapi-secure-pipeline:latest
                     '''
                 }
-
-                /* deploy con Railway */
                 withCredentials([string(credentialsId: 'railway-token',
                                         variable: 'RAILWAY_TOKEN')]) {
                     sh 'scripts/deploy.sh "$RAILWAY_TOKEN"'
@@ -122,11 +120,10 @@ pipeline {
         }
     }
 
-    /* -------- Post-build --------------------------------------------------- */
     post {
         failure {
-            echo "Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} failed ➜ ${env.BUILD_URL}"
-            /*  Descomenta cuando tengas un SMTP funcional
+            echo "Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED ➜ ${env.BUILD_URL}"
+            /* activa cuando configures un SMTP válido
             mail to: 'secops@patitosbank.com',
                  subject: "🚨 Build FAILED",
                  body: "Revisa logs: ${env.BUILD_URL}"
