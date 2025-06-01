@@ -44,24 +44,24 @@ stage('Dependency Scan') {
     agent {
         docker {
             image 'owasp/dependency-check:latest'
-            args  '--entrypoint=""'          // anulamos ENTRYPOINT
+            args  "--entrypoint='' -v $WORKSPACE/.dc-cache:/usr/share/dependency-check/data"
         }
+    }
+    environment {
+        NVD_API_KEY = credentials('nvd-api-key')   // <- aquí la inyectas
     }
     steps {
         sh '''
-          mkdir -p reports/dep-check
-          /usr/share/dependency-check/bin/dependency-check.sh \
-            --project "fastapi-secure-pipeline" \
-            --scan "$WORKSPACE/app" \
-            --format XML --out reports/dep-check
+          dependency-check.sh \
+            --project fastapi-secure-pipeline \
+            --scan app \
+            --format XML \
+            --out reports/dep-check
         '''
     }
-    post {
-        always {
-            dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml'
-        }
-    }
+    post { always { dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml' } }
 }
+
 
 
         /* -------- 4 · SAST (Sonar) ------------------- */
