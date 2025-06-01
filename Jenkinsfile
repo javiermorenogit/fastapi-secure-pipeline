@@ -2,20 +2,15 @@
 pipeline {
     agent any
     environment {
-        IMAGE_NAME = "javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
+        IMAGE_NAME      = "javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
         DOCKER_BUILDKIT = '1'
     }
 
     stages {
 
-        /* -------- 1 · Lint -------------------------- */
+        /* ---------- 1 · Lint ---------- */
         stage('Lint') {
-            agent {
-                docker {
-                    image 'python:3.11-slim'
-                    args  '-u root'
-                }
-            }
+            agent { docker { image 'python:3.11-slim'; args '-u root' } }
             steps {
                 sh '''
                   pip install --no-cache-dir ruff
@@ -24,7 +19,7 @@ pipeline {
             }
         }
 
-        /* -------- 2 · Unit tests + cov --------------- */
+        /* ---------- 2 · Unit Tests ---------- */
         stage('Unit Tests') {
             agent { docker { image 'python:3.11-slim' } }
             steps {
@@ -39,38 +34,36 @@ pipeline {
             post { always { junit 'reports/tests.xml' } }
         }
 
-/* ---------- 3 · Dependency-Check ---------- */
-stage('Dependency Scan') {
-    agent {
-        docker {
-            image 'owasp/dependency-check:latest'
-            args  "--entrypoint='' -v $WORKSPACE/.dc-cache:/usr/share/dependency-check/data"
+        /* ---------- 3 · Dependency-Check ---------- */
+        stage('Dependency Scan') {
+            /* 👇 usamos la imagen multi-arch del autor  */
+            agent {
+                docker {
+                    image 'ghcr.io/jeremylong/owasp-dependency-check:latest'
+                    args  "--entrypoint='' -v $WORKSPACE/.dc-cache:/usr/share/dependency-check/data"
+                }
+            }
+            environment {
+                NVD_API_KEY = credentials('nvd-api-key')   /* tu token */
+            }
+            steps {
+                sh '''
+                  /usr/share/dependency-check/bin/dependency-check.sh \
+                      --project fastapi-secure-pipeline \
+                      --scan app \
+                      --format XML \
+                      --out reports/dep-check
+                '''
+            }
+            post { always { dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml' } }
         }
-    }
-    environment {
-        NVD_API_KEY = credentials('nvd-api-key')   // <- aquí la inyectas
-    }
-    steps {
-        sh '''
-          dependency-check.sh \
-            --project fastapi-secure-pipeline \
-            --scan app \
-            --format XML \
-            --out reports/dep-check
-        '''
-    }
-    post { always { dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml' } }
-}
 
-
-
-        /* -------- 4 · SAST (Sonar) ------------------- */
+        /* ---------- 4 · SAST (Sonar) ---------- */
         stage('SAST (Sonar)') {
             agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
             environment { SONAR_HOST_URL = 'https://sonarcloud.io' }
             steps {
-                withCredentials([string(credentialsId: 'sonar-token',
-                                        variable: 'SONAR_TOKEN')]) {
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
                       sonar-scanner \
                         -Dsonar.projectKey=fastapi-secure-pipeline \
@@ -82,38 +75,37 @@ stage('Dependency Scan') {
             }
         }
 
-        /* -------- 5 · Build image -------------------- */
+        /* ---------- 5 · Build image ---------- */
         stage('Build Image') {
             steps { sh 'docker build -t $IMAGE_NAME .' }
         }
 
-        /* -------- 6 · Trivy -------------------------- */
+        /* ---------- 6 · Trivy ---------- */
         stage('Container Scan') {
             agent { docker { image 'aquasec/trivy:latest' } }
             steps { sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME' }
         }
 
-        /* -------- 7 · Gitleaks ----------------------- */
+        /* ---------- 7 · Gitleaks ---------- */
         stage('Secrets Scan') {
             agent { docker { image 'zricethezav/gitleaks:latest' } }
             steps { sh 'gitleaks detect --source . --exit-code 1' }
         }
 
-        /* -------- 8 · Push & Deploy ------------------ */
+        /* ---------- 8 · Push & Deploy ---------- */
         stage('Push & Deploy') {
             when { branch 'main' }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
-                                                 usernameVariable: 'DOCKER_USER',
-                                                 passwordVariable: 'DOCKER_PSW')]) {
+                                                  usernameVariable: 'DOCKER_USER',
+                                                  passwordVariable: 'DOCKER_PSW')]) {
                     sh '''
                       echo "$DOCKER_PSW" | docker login -u "$DOCKER_USER" --password-stdin
                       docker tag $IMAGE_NAME $DOCKER_USER/fastapi-secure-pipeline:latest
                       docker push $DOCKER_USER/fastapi-secure-pipeline:latest
                     '''
                 }
-                withCredentials([string(credentialsId: 'railway-token',
-                                        variable: 'RAILWAY_TOKEN')]) {
+                withCredentials([string(credentialsId: 'railway-token', variable: 'RAILWAY_TOKEN')]) {
                     sh 'scripts/deploy.sh "$RAILWAY_TOKEN"'
                 }
             }
@@ -123,7 +115,7 @@ stage('Dependency Scan') {
     post {
         failure {
             echo "Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED ➜ ${env.BUILD_URL}"
-            /* activa cuando configures un SMTP válido
+            /* Descomenta cuando tengas SMTP:
             mail to: 'secops@patitosbank.com',
                  subject: "🚨 Build FAILED",
                  body: "Revisa logs: ${env.BUILD_URL}"
