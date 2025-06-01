@@ -1,121 +1,28 @@
+/* ──────────────────────────────  Jenkinsfile  ────────────────────────────── */
 pipeline {
-  agent any
+    /*  Nodo donde arranca todo; las etapas con “agent docker”
+        sobrescriben este valor */
+    agent any
 
-  environment {
-    DOCKERHUB_CREDS = credentials('dockerhub-cred')  // user & password
-    SONAR_TOKEN     = credentials('sonar-token')
-    RAILWAY_TOKEN   = credentials('railway-token')
-    IMAGE_NAME      = "${DOCKERHUB_CREDS_USR}/fastapi-app:${BUILD_NUMBER}"
-  }
-
-  stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
-
-    stage('Lint') {
-      steps { sh 'python -m pip install ruff && ruff check app' }
-    }
-
-stage('Unit Tests') {
-    steps {
-        sh '''
-            export PYTHONPATH=$(pwd)
-            pytest -q --cov app --cov-fail-under=80 --junitxml reports/tests.xml
-        '''
-    }
-}
-
-    stage('Dependency Scan') {
-      steps {
-        sh '''
-          chmod +x scripts/dependency-check.sh
-          scripts/dependency-check.sh \
-            --project fastapi-app \
-            --format XML \
-            --out reports/ \
-            --scan .
-        '''
-      }
-      post { always { dependencyCheckPublisher pattern: 'reports/dependency-check-report.xml' } }
-    }
-
-    stage('SAST (SonarQube)') {
-      steps {
-        withSonarQubeEnv('SonarQube') {
-          sh """
-            sonar-scanner \
-              -Dsonar.projectKey=fastapi-app \
-              -Dsonar.login=$SONAR_TOKEN \
-              -Dsonar.qualitygate.wait=true
-          """
-        }
-      }
-    }
-
-    stage('Build Image') {
-      steps { sh "docker build -t $IMAGE_NAME ." }
-    }
-
-    stage('Container Scan') {
-      steps {
-        sh '''
-          chmod +x scripts/trivy_scan.sh
-          scripts/trivy_scan.sh "$IMAGE_NAME"
-        '''
-      }
-    }
-
-    stage('Secrets Scan') {
-      steps {
-        sh '''
-          python -m pip install gitleaks
-          gitleaks detect --exit-code 1 --source .
-        '''
-      }
-    }
-
-    stage('Push & Deploy') {
-      when { branch 'main' }
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
-                    usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-          sh '''
-            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-            docker push $IMAGE_NAME
-          '''
-        }
-        sh '''
-          chmod +x scripts/deploy.sh
-          scripts/deploy.sh
-        '''
-      }
-    }
-  }
-
-  post {
-    failure {
-      mail to: 'secops@patitosbank.com',
-           subject: "Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED",
-           body: "Revisar logs: ${env.BUILD_URL}"
-    }
-  }
-}
-pipeline {
-    agent any            // el nodo Jenkins por defecto
-
+    /*  Variables globales accesibles en todo el pipeline  */
     environment {
-        IMAGE_NAME = "javiermorenogit/fastapi-secure-pipeline"
+        IMAGE_NAME = "javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
+        DOCKER_BUILDKIT = '1'
     }
 
     stages {
 
-        /* ---------- 1 · Lint ---------- */
+        /* -------- 1. Checkout ------------------------------------------------ */
+        stage('Checkout') {
+            steps { checkout scm }
+        }
+
+        /* -------- 2. Lint (ruff) -------------------------------------------- */
         stage('Lint') {
             agent {
                 docker {
                     image 'python:3.11-slim'
-                    args  '-u root'          // para que pip pueda escribir
+                    args  '-u root'               // pip podrá escribir en /usr/local
                 }
             }
             steps {
@@ -126,54 +33,47 @@ pipeline {
             }
         }
 
-        /* ---------- 2 · Unit Tests ---------- */
+        /* -------- 3. Unit Tests + cobertura --------------------------------- */
         stage('Unit Tests') {
-            agent {
-                docker { image 'python:3.11-slim' }
-            }
+            agent { docker { image 'python:3.11-slim' } }
             steps {
                 sh '''
                   pip install --no-cache-dir -r requirements.txt
                   pip install --no-cache-dir pytest pytest-cov
                   export PYTHONPATH=$(pwd)
-                  pytest -q --cov app --cov-fail-under=80 --junitxml reports/tests.xml
+                  pytest -q --cov app --cov-fail-under=80 \
+                         --junitxml reports/tests.xml
                 '''
             }
-            post {
-                always {
-                    junit 'reports/tests.xml'
-                }
-            }
+            post { always { junit 'reports/tests.xml' } }
         }
 
-        /* ---------- 3 · Dependency-Check ---------- */
+        /* -------- 4. Dependency-Check --------------------------------------- */
         stage('Dependency Scan') {
             agent { docker { image 'owasp/dependency-check:latest' } }
             steps {
                 sh '''
                   dependency-check.sh --project "fastapi-secure-pipeline" \
-                                      --scan app \
-                                      --format XML --out reports/dep-check
+                                     --scan /workspace/app \
+                                     --format XML --out /workspace/reports/dep-check
                 '''
+            }
+            post {
+                always {
+                    dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml'
+                }
             }
         }
 
-        /*  … Resto de etapas: Sonar, Build Image, Trivy, Gitleaks, Deploy … */
-    }
-
-    /* ---------- Credenciales ---------- */
-    // Solo un bloque; lo puedes envolver donde las consumas
-    // Ejemplo para Sonar + Docker Hub
-    stages {
-        stage('SAST (SonarQube)') {
+        /* -------- 5. SAST (SonarCloud / Qube) ------------------------------ */
+        stage('SAST (Sonar)') {
             agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
             environment {
-                SONAR_HOST_URL = 'https://sonarcloud.io'  // o tu SonarQube
+                SONAR_HOST_URL = 'https://sonarcloud.io'   // cambia si usas SonarQube on-prem
             }
             steps {
-                withCredentials([
-                    string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')
-                ]) {
+                withCredentials([string(credentialsId: 'sonar-token',
+                                        variable: 'SONAR_TOKEN')]) {
                     sh '''
                       sonar-scanner \
                         -Dsonar.projectKey=fastapi-secure-pipeline \
@@ -184,61 +84,62 @@ pipeline {
                 }
             }
         }
-    }
 
-    /* ---------- Notificación por correo opcional ---------- */
-    post {
-        failure {
-            // *Desactiva* o configura un SMTP válido
-            // mail to: 'tu@email.com', …
+        /* -------- 6. Build Docker image ------------------------------------ */
+        stage('Build Image') {
+            steps { sh 'docker build -t $IMAGE_NAME .' }
         }
-    }
-}
-pipeline {
-    agent any            // el nodo Jenkins donde se lanzan las etapas
 
-    environment {
-        IMAGE_NAME = "javiermorenogit/fastapi-secure-pipeline"
-    }
+        /* -------- 7. Trivy (vuln scan) ------------------------------------- */
+        stage('Container Scan') {
+            agent { docker { image 'aquasec/trivy:latest' } }
+            steps { sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME' }
+        }
 
-    stages {
+        /* -------- 8. Gitleaks (secret scan) -------------------------------- */
+        stage('Secrets Scan') {
+            agent { docker { image 'zricethezav/gitleaks:latest' } }
+            steps { sh 'gitleaks detect --source . --exit-code 1' }
+        }
 
-        stage('Lint') {
-            agent {
-                docker {
-                    image 'python:3.11-slim'
-                    args  '-u root'        // pip puede escribir en /usr/local
+        /* -------- 9. Push & Deploy (sólo en main) -------------------------- */
+        stage('Push & Deploy') {
+            when { branch 'main' }
+            steps {
+                /* --- push a Docker Hub --- */
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
+                                                 usernameVariable: 'DOCKER_USER',
+                                                 passwordVariable: 'DOCKER_PSW')]) {
+                    sh '''
+                      echo "$DOCKER_PSW" | docker login -u "$DOCKER_USER" --password-stdin
+                      docker tag $IMAGE_NAME $DOCKER_USER/fastapi-secure-pipeline:latest
+                      docker push $DOCKER_USER/fastapi-secure-pipeline:latest
+                    '''
+                }
+
+                /* --- deploy con Railway CLI --- */
+                withCredentials([string(credentialsId: 'railway-token',
+                                        variable: 'RAILWAY_TOKEN')]) {
+                    sh '''
+                      chmod +x scripts/deploy.sh
+                      scripts/deploy.sh "$RAILWAY_TOKEN"
+                    '''
                 }
             }
-            steps {
-                sh '''
-                  pip install --no-cache-dir ruff
-                  ruff check app
-                '''
-            }
         }
-
-        stage('Unit Tests') {
-            agent { docker { image 'python:3.11-slim' } }
-            steps {
-                sh '''
-                  pip install --no-cache-dir -r requirements.txt
-                  pip install --no-cache-dir pytest pytest-cov
-                  export PYTHONPATH=$(pwd)
-                  pytest -q --cov app --cov-fail-under=80 --junitxml reports/tests.xml
-                '''
-            }
-            post { always { junit 'reports/tests.xml' } }
-        }
-
-        /* … deja las demás etapas igual … */
     }
 
+    /* -------- Post-build actions ----------------------------------------- */
     post {
         failure {
-            // Desactiva correo mientras uses ElasticEmail free
-            // mail to: 'javiermorenog@gmail.com', subject: "Build FAILED", body: "Ver Jenkins"
+            // Desactiva el envío mientras terminas de configurar SMTP, o
+            // personaliza “from” para que Elastic Email no rechace la petición.
+            /*
+            mail to: 'secops@patitosbank.com',
+                 subject: "🚨 Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED",
+                 body: "Revisa logs: ${env.BUILD_URL}"
+            */
         }
     }
 }
-
+/* ────────────────────────────────────────────────────────────────────────── */
