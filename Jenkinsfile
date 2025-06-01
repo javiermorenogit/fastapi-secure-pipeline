@@ -194,4 +194,51 @@ pipeline {
         }
     }
 }
+pipeline {
+    agent any            // el nodo Jenkins donde se lanzan las etapas
+
+    environment {
+        IMAGE_NAME = "javiermorenogit/fastapi-secure-pipeline"
+    }
+
+    stages {
+
+        stage('Lint') {
+            agent {
+                docker {
+                    image 'python:3.11-slim'
+                    args  '-u root'        // pip puede escribir en /usr/local
+                }
+            }
+            steps {
+                sh '''
+                  pip install --no-cache-dir ruff
+                  ruff check app
+                '''
+            }
+        }
+
+        stage('Unit Tests') {
+            agent { docker { image 'python:3.11-slim' } }
+            steps {
+                sh '''
+                  pip install --no-cache-dir -r requirements.txt
+                  pip install --no-cache-dir pytest pytest-cov
+                  export PYTHONPATH=$(pwd)
+                  pytest -q --cov app --cov-fail-under=80 --junitxml reports/tests.xml
+                '''
+            }
+            post { always { junit 'reports/tests.xml' } }
+        }
+
+        /* … deja las demás etapas igual … */
+    }
+
+    post {
+        failure {
+            // Desactiva correo mientras uses ElasticEmail free
+            // mail to: 'javiermorenog@gmail.com', subject: "Build FAILED", body: "Ver Jenkins"
+        }
+    }
+}
 
