@@ -35,28 +35,27 @@ pipeline {
         }
 
         /* ---------- 3 · Dependency-Check ---------- */
-        stage('Dependency Scan') {
-            /* 👇 usamos la imagen multi-arch del autor  */
-            agent {
-                docker {
-                    image 'ghcr.io/jeremylong/owasp-dependency-check:latest'
-                    args  "--entrypoint='' -v $WORKSPACE/.dc-cache:/usr/share/dependency-check/data"
-                }
-            }
-            environment {
-                NVD_API_KEY = credentials('nvd-api-key')   /* tu token */
-            }
-            steps {
-                sh '''
-                  /usr/share/dependency-check/bin/dependency-check.sh \
-                      --project fastapi-secure-pipeline \
-                      --scan app \
-                      --format XML \
-                      --out reports/dep-check
-                '''
-            }
-            post { always { dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml' } }
+stage('Dependency Scan') {
+    steps {
+        withCredentials([usernamePassword(credentialsId: 'ghcr-cred',
+                                          usernameVariable: 'GH_USER',
+                                          passwordVariable: 'GH_PAT')]) {
+            sh '''
+              echo "$GH_PAT" | docker login ghcr.io -u "$GH_USER" --password-stdin
+              docker run --rm -u $(id -u):$(id -g) \
+                -v "$WORKSPACE:/src" \
+                -v "$WORKSPACE/.dc-cache:/usr/share/dependency-check/data" \
+                -e NVD_API_KEY=$NVD_API_KEY \
+                ghcr.io/jeremylong/owasp-dependency-check:latest \
+                --project fastapi-secure-pipeline \
+                --scan /src/app \
+                --format XML \
+                --out /src/reports/dep-check
+            '''
         }
+    }
+    post { always { dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml' } }
+}
 
         /* ---------- 4 · SAST (Sonar) ---------- */
         stage('SAST (Sonar)') {
