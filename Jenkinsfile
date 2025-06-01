@@ -1,10 +1,8 @@
-/* ──────────────────────────────  Jenkinsfile  ────────────────────────────── */
+/* ───────── fastapi-secure-pipeline / Jenkinsfile ───────── */
 pipeline {
-    /*  Nodo donde arranca todo; las etapas con “agent docker”
-        sobrescriben este valor */
+    /* nodo por defecto; las stages con “agent { docker … }” lo sobreescriben */
     agent any
 
-    /*  Variables globales accesibles en todo el pipeline  */
     environment {
         IMAGE_NAME = "javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
         DOCKER_BUILDKIT = '1'
@@ -17,12 +15,12 @@ pipeline {
             steps { checkout scm }
         }
 
-        /* -------- 2. Lint (ruff) -------------------------------------------- */
+        /* -------- 2. Lint ---------------------------------------------------- */
         stage('Lint') {
             agent {
                 docker {
                     image 'python:3.11-slim'
-                    args  '-u root'               // pip podrá escribir en /usr/local
+                    args  '-u root'          // pip puede escribir en /usr/local
                 }
             }
             steps {
@@ -33,7 +31,7 @@ pipeline {
             }
         }
 
-        /* -------- 3. Unit Tests + cobertura --------------------------------- */
+        /* -------- 3. Unit Tests + coverage ---------------------------------- */
         stage('Unit Tests') {
             agent { docker { image 'python:3.11-slim' } }
             steps {
@@ -65,12 +63,10 @@ pipeline {
             }
         }
 
-        /* -------- 5. SAST (SonarCloud / Qube) ------------------------------ */
+        /* -------- 5. SAST (SonarCloud/Qube) --------------------------------- */
         stage('SAST (Sonar)') {
             agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
-            environment {
-                SONAR_HOST_URL = 'https://sonarcloud.io'   // cambia si usas SonarQube on-prem
-            }
+            environment { SONAR_HOST_URL = 'https://sonarcloud.io' }   // o tu URL
             steps {
                 withCredentials([string(credentialsId: 'sonar-token',
                                         variable: 'SONAR_TOKEN')]) {
@@ -90,23 +86,23 @@ pipeline {
             steps { sh 'docker build -t $IMAGE_NAME .' }
         }
 
-        /* -------- 7. Trivy (vuln scan) ------------------------------------- */
+        /* -------- 7. Trivy -------------------------------------------------- */
         stage('Container Scan') {
             agent { docker { image 'aquasec/trivy:latest' } }
             steps { sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME' }
         }
 
-        /* -------- 8. Gitleaks (secret scan) -------------------------------- */
+        /* -------- 8. Gitleaks ---------------------------------------------- */
         stage('Secrets Scan') {
             agent { docker { image 'zricethezav/gitleaks:latest' } }
             steps { sh 'gitleaks detect --source . --exit-code 1' }
         }
 
-        /* -------- 9. Push & Deploy (sólo en main) -------------------------- */
+        /* -------- 9. Push & Deploy (main) ---------------------------------- */
         stage('Push & Deploy') {
             when { branch 'main' }
             steps {
-                /* --- push a Docker Hub --- */
+                /* push a Docker Hub */
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-cred',
                                                  usernameVariable: 'DOCKER_USER',
                                                  passwordVariable: 'DOCKER_PSW')]) {
@@ -117,29 +113,24 @@ pipeline {
                     '''
                 }
 
-                /* --- deploy con Railway CLI --- */
+                /* deploy con Railway */
                 withCredentials([string(credentialsId: 'railway-token',
                                         variable: 'RAILWAY_TOKEN')]) {
-                    sh '''
-                      chmod +x scripts/deploy.sh
-                      scripts/deploy.sh "$RAILWAY_TOKEN"
-                    '''
+                    sh 'scripts/deploy.sh "$RAILWAY_TOKEN"'
                 }
             }
         }
     }
 
-    /* -------- Post-build actions ----------------------------------------- */
+    /* -------- Post-build --------------------------------------------------- */
     post {
         failure {
-            // Desactiva el envío mientras terminas de configurar SMTP, o
-            // personaliza “from” para que Elastic Email no rechace la petición.
-            /*
+            echo "Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} failed ➜ ${env.BUILD_URL}"
+            /*  Descomenta cuando tengas un SMTP funcional
             mail to: 'secops@patitosbank.com',
-                 subject: "🚨 Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED",
+                 subject: "🚨 Build FAILED",
                  body: "Revisa logs: ${env.BUILD_URL}"
             */
         }
     }
 }
-/* ────────────────────────────────────────────────────────────────────────── */
