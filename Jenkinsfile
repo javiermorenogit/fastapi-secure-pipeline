@@ -8,7 +8,18 @@ pipeline {
 
     stages {
 
-        /* ---------- 1 · Lint ---------- */
+ /* ---------- 0 · Cache ---------- */
+stage('Setup') {
+  agent any
+  steps {
+    sh 'mkdir -p $WORKSPACE/.dc-cache'
+  }
+}
+
+       
+
+
+ /* ---------- 1 · Lint ---------- */
         stage('Lint') {
             agent { docker { image 'python:3.11-slim'; args '-u root' } }
             steps {
@@ -35,24 +46,24 @@ pipeline {
         }
 /* ---------- 3 · Dependency-Check ---------- */
 stage('Dependency Scan') {
-    // ▶️ Cambiamos de “docker { … }” a “agent any” para correr el docker run manual
+    // 🔥 Cambiamos de “agent { docker { … } }” a “agent any”
     agent any
 
     environment {
-        NVD_API_KEY = credentials('nvd-api-key')
-        DC_IMAGE    = 'owasp/dependency-check:8.4.0'
-        DC_CACHE    = "$WORKSPACE/.dc-cache"
+        NVD_API_KEY = credentials('nvd-api-key')         // Tu secreto de NVD
+        DC_IMAGE    = 'owasp/dependency-check:8.4.0'     // Versión estable más reciente
+        DC_CACHE    = "${WORKSPACE}/.dc-cache"          // Donde guardamos la caché para NVD
     }
 
     options {
-        timeout(time: 40, unit: 'MINUTES')
+        timeout(time: 40, unit: 'MINUTES')  // Porque la primera descarga de CVE puede tardar
     }
 
     steps {
         sh '''
             set -e
 
-            echo "▶️  Pull image (si hace falta)…"
+            echo "▶️  Pull image (si no la tienes)…"
             docker pull "$DC_IMAGE"
 
             echo "▶️  Ejecutando Dependency-Check…"
@@ -74,6 +85,7 @@ stage('Dependency Scan') {
 
     post {
         always {
+            // Ajusta aquí los umbrales si quieres fallar/instabilizar según HIGH/CRITICAL
             dependencyCheckPublisher(
                 pattern: 'reports/dep-check/dependency-check-report.xml',
                 failedTotalCritical: 1,
@@ -83,21 +95,24 @@ stage('Dependency Scan') {
     }
 }
         /* ---------- 4 · SAST (Sonar) ---------- */
-        stage('SAST (Sonar)') {
-            agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
-            environment { SONAR_HOST_URL = 'https://sonarcloud.io' }
-            steps {
-                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
-                    sh '''
-                      sonar-scanner \
-                        -Dsonar.projectKey=fastapi-secure-pipeline \
-                        -Dsonar.sources=. \
-                        -Dsonar.host.url=$SONAR_HOST_URL \
-                        -Dsonar.login=$SONAR_TOKEN
-                    '''
-                }
-            }
+stage('SAST (Sonar)') {
+    agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
+    environment {
+        SONAR_HOST_URL = 'https://sonarcloud.io'
+    }
+    steps {
+        withCredentials([ string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN') ]) {
+            sh '''
+              sonar-scanner \
+                -Dsonar.projectKey=fastapi-secure-pipeline \
+                -Dsonar.sources=. \
+                -Dsonar.host.url=$SONAR_HOST_URL \
+                -Dsonar.login=$SONAR_TOKEN
+            '''
         }
+    }
+}
+
 
         /* ---------- 5 · Build image ---------- */
         stage('Build Image') {
@@ -136,14 +151,18 @@ stage('Dependency Scan') {
         }
     }
 
-    post {
-        failure {
-            echo "Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED ➜ ${env.BUILD_URL}"
-            /* Descomenta cuando tengas SMTP:
-            mail to: 'secops@patitosbank.com',
-                 subject: "🚨 Build FAILED",
-                 body: "Revisa logs: ${env.BUILD_URL}"
-            */
-        }
+post {
+  failure {
+    withCredentials([ usernamePassword(
+        credentialsId: 'smtp-cred',
+        usernameVariable: 'SMTP_USER',
+        passwordVariable: 'SMTP_PSW'
+    ) ]) {
+      mail to: 'secops@patitosbank.com',
+           from: "${SMTP_USER}",
+           subject: "🚨 Build FAILED",
+           body: "Revisa logs: ${env.BUILD_URL}"
     }
+  }
 }
+
