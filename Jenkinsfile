@@ -14,6 +14,9 @@ pipeline {
         // Dependency-Check: directorio local donde vive el caché
         DC_DATA_DIR        = "${HOME}/.dependency-check-data"
         DEP_CHECK_REPORT   = "reports/dependency-check.xml"
+
+        // “BUILD_M2_CACHE” apuntará a una carpeta .m2 dentro del workspace
+        BUILD_M2_CACHE     = "${env.WORKSPACE}/.m2"
     }
 
     stages {
@@ -24,23 +27,31 @@ pipeline {
         }
 
         stage('Build & Unit Tests') {
+            /* 
+               Cambiamos el volumen -v para apuntar a BUILD_M2_CACHE,
+               que a su vez está dentro de ${WORKSPACE}, para que Docker
+               no intente montar /root/.m2 del host y provoque error de “Mounts denied”.
+            */
             agent {
                 docker {
                     image 'maven:3.8.4-openjdk-17'
-                    args  '-v $HOME/.m2:/root/.m2'
+                    args  "-v ${BUILD_M2_CACHE}:/root/.m2"
                 }
             }
             steps {
                 script {
-                    // Aquí obtenemos SonarScanner dentro de un node para que el 'tool' pueda resolverse
+                    // Obtenemos SonarScanner dentro de un node para que 'tool()' se resuelva
                     SONAR_SCANNER_HOME = tool name: 'SonarQubeScanner', type: 'hudson.plugins.sonar.SonarRunnerInstallation'
                 }
+                // Asegurarnos de que exista la carpeta .m2 dentro de workspace antes de usarla
+                sh "mkdir -p ${BUILD_M2_CACHE}"
                 sh """
                    mvn clean verify sonar:sonar \
                      -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
                      -Dsonar.host.url=${SONAR_HOST_URL} \
                      -Dsonar.login=${SONAR_CREDENTIALS} \
-                     -Dsonar.scanner.home=${SONAR_SCANNER_HOME}
+                     -Dsonar.scanner.home=${SONAR_SCANNER_HOME} \
+                     -Dmaven.repo.local=/root/.m2
                 """
                 junit 'target/surefire-reports/*.xml'
                 archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
@@ -85,8 +96,8 @@ pipeline {
             }
             post {
                 aborted {
-                    echo "Stage ‘Dependency Scan’ abortado por timeout. Verifica que el caché exista y/o aumenta el timeout si es necesario."
-                    error "Tiempo máximo de 15 minutos alcanzado en Dependency Scan."
+                    echo "Stage ‘Dependency Scan’ abortado por timeout. Verifica que el caché existe y/o aumenta el timeout."
+                    error "Timeout de 15 minutos en Dependency Scan."
                 }
                 unsuccessful {
                     echo 'Se encontraron vulnerabilidades HIGH/CRITICAL en dependencias.'
@@ -221,8 +232,8 @@ pipeline {
             cleanWs()
         }
         failure {
-            // Si quieres usar un mail step, asegúrate de que la cuenta SMTP esté correctamente configurada
-            mail to: 'tucorreo@dominio.com',
+            // Asegúrate de configurar bien tu SMTP en Jenkins para que este mail funcione
+            mail to: 'javiermorenog@gmail.com',
                  subject: "[Pipeline FALLIDO] ${JOB_NAME} #${BUILD_NUMBER}",
                  body: "El build ha fallado en la etapa: ${STAGE_NAME}\nRevisar logs en Jenkins."
         }
