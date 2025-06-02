@@ -2,10 +2,10 @@ pipeline {
     agent any
 
     environment {
-        // Define aquí tu clave de NVD si la tienes configurada en Jenkins como 'nvd-api-key-id'
-        NVD_API_KEY = credentials('nvd-api-key-id')
-        // Define aquí tu token de SonarCloud si la tienes configurada en Jenkins como 'sonar-token-id'
-        SONAR_TOKEN  = credentials('sonar-token-id')
+        // Define aquí tu clave de NVD si la tienes configurada en Jenkins como 'nvd-api-key'
+        NVD_API_KEY = credentials('nvd-api-key')
+        // Define aquí tu token de SonarCloud si la tienes configurada en Jenkins como 'sonar-token'
+        SONAR_TOKEN  = credentials('sonar-token')
         DOCKER_REGISTRY = "docker.io"
         IMAGE_NAME      = "javiermorenogit/fastapi-secure-pipeline"
     }
