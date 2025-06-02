@@ -158,28 +158,27 @@ stage('Dependency Scan') {
         }
 
         /* ---------- 8 · Push & Deploy ---------- */
-        stage('Push & Deploy') {
-            when { branch 'main' }
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-cred',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PSW'
-                )]) {
-                    sh '''
-                      echo "$DOCKER_PSW" | docker login -u "$DOCKER_USER" --password-stdin
-                      docker tag "${IMAGE_NAME}" "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}"
-                      docker push "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}"
-                      docker tag "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}" "${DOCKER_USER}/fastapi-secure-pipeline:latest"
-                      docker push "${DOCKER_USER}/fastapi-secure-pipeline:latest"
-                    '''
-                }
-                withCredentials([string(credentialsId: 'railway-token', variable: 'RAILWAY_TOKEN')]) {
-                    sh 'scripts/deploy.sh "$RAILWAY_TOKEN"'
-                }
-            }
+stage('Push & Deploy') {
+    steps {
+        withCredentials([usernamePassword(
+            credentialsId: 'dockerhub-cred',
+            usernameVariable: 'DOCKER_USER',
+            passwordVariable: 'DOCKER_PSW'
+        )]) {
+            sh '''
+              echo "$DOCKER_PSW" | docker login -u "$DOCKER_USER" --password-stdin
+              docker tag "${IMAGE_NAME}" "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}"
+              docker push "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}"
+              docker tag "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}" "${DOCKER_USER}/fastapi-secure-pipeline:latest"
+              docker push "${DOCKER_USER}/fastapi-secure-pipeline:latest"
+            '''
+        }
+        withCredentials([string(credentialsId: 'railway-token', variable: 'RAILWAY_TOKEN')]) {
+            sh 'scripts/deploy.sh "$RAILWAY_TOKEN"'
         }
     }
+}
+
 
     post {
         failure {
