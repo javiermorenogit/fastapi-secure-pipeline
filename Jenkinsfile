@@ -60,39 +60,29 @@ pipeline {
 
         /* ---------- 3 · Dependency-Check ---------- */
 stage('Dependency Scan') {
-    steps {
-        // 1) Ejecutar OWASP Dependency-Check en Docker y generar el XML
-        sh '''
-          docker pull owasp/dependency-check:8.4.0
+  steps {
+    // (1) ejecutas tu contenedor que genera el XML
+    sh """
+      docker run --rm \
+        -u 0:0 \
+        -v ${WORKSPACE}/app:/src \
+        -v ${WORKSPACE}/.dc-cache:/usr/share/dependency-check/data \
+        -v ${WORKSPACE}/reports/dep-check:/out \
+        -e NVD_API_KEY= \
+        owasp/dependency-check:8.4.0 \
+          /usr/share/dependency-check/bin/dependency-check.sh \
+            --project fastapi-secure-pipeline \
+            --scan /src \
+            --out /out \
+            --format XML \
+            --prettyPrint \
+            --log /out/dc.log
+    """
 
-          docker run --rm \
-            -u 0:0 \
-            -v $WORKSPACE/app:/src \
-            -v $WORKSPACE/.dc-cache:/usr/share/dependency-check/data \
-            -v $WORKSPACE/reports/dep-check:/out \
-            -e NVD_API_KEY=$NVD_API_KEY \
-            owasp/dependency-check:8.4.0 \
-              /usr/share/dependency-check/bin/dependency-check.sh \
-                --project fastapi-secure-pipeline \
-                --scan /src \
-                --out /out \
-                --format XML \
-                --prettyPrint \
-                --log /out/dc.log
-        '''
-
-        // 2) Publicar el reporte sin que marque UNSTABLE ni falle la build
-        script {
-            catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
-                dependencyCheckPublisher(
-                  // Ruta relativa desde el workspace
-                  pattern: 'reports/dep-check/dependency-check-report.xml',
-                  // Impide que marque la build como inestable o fallida
-                  skipOnError: true
-                )
-            }
-        }
-    }
+    // (2) publica el reporte indicando el patrón correcto
+    //     quitamos skipOnError, y usamos "pattern" con la ruta relativa
+    dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml'
+  }
 }
 
         /* ---------- 4 · SAST (SonarCloud) ---------- */
