@@ -58,32 +58,31 @@ pipeline {
             }
         }
 
-        /* ---------- 3 · Dependency-Check ---------- */
-stage('Dependency Scan') {
-  steps {
-    // (1) ejecutas tu contenedor que genera el XML
-    sh """
-      docker run --rm \
-        -u 0:0 \
-        -v ${WORKSPACE}/app:/src \
-        -v ${WORKSPACE}/.dc-cache:/usr/share/dependency-check/data \
-        -v ${WORKSPACE}/reports/dep-check:/out \
-        -e NVD_API_KEY= \
-        owasp/dependency-check:8.4.0 \
-          /usr/share/dependency-check/bin/dependency-check.sh \
-            --project fastapi-secure-pipeline \
-            --scan /src \
-            --out /out \
-            --format XML \
-            --prettyPrint \
-            --log /out/dc.log
-    """
+        /* ---------- 3 · Dependency Scan ---------- */
+        stage('Dependency Scan') {
+            steps {
+                // 1. Ejecuta el contenedor de OWASP Dependency-Check para generar el XML
+                sh """
+                  docker run --rm \
+                    -u 0:0 \
+                    -v ${WORKSPACE}/app:/src \
+                    -v ${WORKSPACE}/.dc-cache:/usr/share/dependency-check/data \
+                    -v ${WORKSPACE}/reports/dep-check:/out \
+                    -e NVD_API_KEY= \
+                    owasp/dependency-check:8.4.0 \
+                      /usr/share/dependency-check/bin/dependency-check.sh \
+                        --project fastapi-secure-pipeline \
+                        --scan /src \
+                        --out /out \
+                        --format XML \
+                        --prettyPrint \
+                        --log /out/dc.log
+                """
 
-    // (2) publica el reporte indicando el patrón correcto
-    //     quitamos skipOnError, y usamos "pattern" con la ruta relativa
-    dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml'
-  }
-}
+                // 2. Publica el reporte con el patrón correcto
+                dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml'
+            }
+        }
 
         /* ---------- 4 · SAST (SonarCloud) ---------- */
         stage('SAST (Sonar)') {
@@ -97,7 +96,7 @@ stage('Dependency Scan') {
                 SONAR_HOST_URL = 'https://sonarcloud.io'
             }
             steps {
-                withCredentials([ string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN') ]) {
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
                       sonar-scanner \
                         -Dsonar.projectKey=fastapi-secure-pipeline \
@@ -145,12 +144,12 @@ stage('Dependency Scan') {
                 sh '''
                   mkdir -p reports
                   gitleaks detect \
-                    --source .  \
+                    --source . \
                     --report-format sarif \
                     --report-path reports/gitleaks.sarif
 
                   gitleaks detect \
-                    --source .   \
+                    --source . \
                     --report-format json \
                     --report-path reports/gitleaks.json
                 '''
@@ -158,35 +157,41 @@ stage('Dependency Scan') {
         }
 
         /* ---------- 8 · Push & Deploy ---------- */
-stage('Push & Deploy') {
-    steps {
-        withCredentials([usernamePassword(
-            credentialsId: 'dockerhub-cred',
-            usernameVariable: 'DOCKER_USER',
-            passwordVariable: 'DOCKER_PSW'
-        )]) {
-            sh '''
-              echo "$DOCKER_PSW" | docker login -u "$DOCKER_USER" --password-stdin
-              docker tag "${IMAGE_NAME}" "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}"
-              docker push "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}"
-              docker tag "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}" "${DOCKER_USER}/fastapi-secure-pipeline:latest"
-              docker push "${DOCKER_USER}/fastapi-secure-pipeline:latest"
-            '''
-        }
-        withCredentials([string(credentialsId: 'railway-token', variable: 'RAILWAY_TOKEN')]) {
-            sh 'scripts/deploy.sh "$RAILWAY_TOKEN"'
+        stage('Push & Deploy') {
+            when {
+                expression {
+                    // Solo ejecuta este stage si la variable BRANCH_NAME es "main"
+                    return env.BRANCH_NAME == 'main'
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-cred',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PSW'
+                )]) {
+                    sh '''
+                      echo "$DOCKER_PSW" | docker login -u "$DOCKER_USER" --password-stdin
+                      docker tag "${IMAGE_NAME}" "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}"
+                      docker push "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}"
+                      docker tag "${DOCKER_USER}/fastapi-secure-pipeline:${BUILD_NUMBER}" "${DOCKER_USER}/fastapi-secure-pipeline:latest"
+                      docker push "${DOCKER_USER}/fastapi-secure-pipeline:latest"
+                    '''
+                }
+                withCredentials([string(credentialsId: 'railway-token', variable: 'RAILWAY_TOKEN')]) {
+                    sh 'scripts/deploy.sh "$RAILWAY_TOKEN"'
+                }
+            }
         }
     }
-}
-
 
     post {
         failure {
-            withCredentials([ usernamePassword(
+            withCredentials([usernamePassword(
                 credentialsId: 'smtp-cred',
                 usernameVariable: 'SMTP_USER',
                 passwordVariable: 'SMTP_PSW'
-            ) ]) {
+            )]) {
                 mail to: 'javiermorenog@gmail.com',
                      from: "${SMTP_USER}",
                      subject: "🚨 Build FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
