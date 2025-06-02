@@ -11,11 +11,11 @@ pipeline {
         SONAR_HOST_URL     = "https://sonarcloud.io"
         SONAR_CREDENTIALS  = "sonar-token-credentials-id"
 
-        // Dependency-Check: directorio local donde vive el caché
+        // Dependency-Check
         DC_DATA_DIR        = "${HOME}/.dependency-check-data"
         DEP_CHECK_REPORT   = "reports/dependency-check.xml"
 
-        // Caché de Maven dentro del workspace (evita el error de “Mounts denied”)
+        // Caché de Maven dentro del workspace (evita “Mounts denied”)
         BUILD_M2_CACHE     = "${env.WORKSPACE}/.m2"
     }
 
@@ -27,10 +27,7 @@ pipeline {
         }
 
         stage('Build & Unit Tests') {
-            /*
-              Usamos Maven dentro de un contenedor y apuntamos el repositorio local a BUILD_M2_CACHE,
-              que está dentro del WORKSPACE, para evitar montar /root/.m2 del host.
-            */
+            // Maven dentro de Docker, montando .m2 en el workspace
             agent {
                 docker {
                     image 'maven:3.8.4-openjdk-17'
@@ -38,10 +35,10 @@ pipeline {
                 }
             }
             steps {
-                // Crear la carpeta de caché de Maven antes de montarla
+                // Crea la carpeta .m2 antes de montarla
                 sh "mkdir -p ${BUILD_M2_CACHE}"
 
-                // Invocar Maven: pruebas + Sonar (usando el plugin sonar:sonar incluido en Maven)
+                // Build, tests y SonarQube
                 sh """
                    mvn clean verify sonar:sonar \
                      -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
@@ -50,16 +47,11 @@ pipeline {
                      -Dmaven.repo.local=/root/.m2
                 """
 
-                // Publicar resultados de JUnit
+                // Publicar resultados JUnit y los artefactos .jar
                 junit 'target/surefire-reports/*.xml'
                 archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             }
             post {
-                always {
-                    // Si usas Jacoco, puedes publicar el reporte (requiere plugin Jacoco en Jenkins)
-                    recordCoverage tools: [jacoco(configMode: 'DEFAULT')], 
-                                   sourceFileResolver: sourceFiles('**/src/main/java')
-                }
                 failure {
                     echo 'Error en Build o pruebas unitarias. Abortando pipeline.'
                 }
@@ -94,8 +86,8 @@ pipeline {
             }
             post {
                 aborted {
-                    echo "Stage ‘Dependency Scan’ abortado por timeout. Aumenta el timeout si es necesario."
-                    error "Timeout en Dependency Scan."
+                    echo "Timeout en Dependency Scan. Ajusta el timeout si hace falta."
+                    error "Abortando por timeout en Dependency Scan."
                 }
                 unsuccessful {
                     echo 'Se encontraron vulnerabilidades HIGH/CRITICAL en dependencias.'
@@ -115,8 +107,8 @@ pipeline {
             }
             post {
                 failure {
-                    echo 'Se encontraron secretos o credenciales expuestos con Gitleaks.'
-                    error 'Abortando pipeline por detección de secretos.'
+                    echo 'Se detectaron secretos expuestos con Gitleaks. Abortando pipeline.'
+                    error 'Abortando por detección de secretos.'
                 }
             }
         }
@@ -133,7 +125,7 @@ pipeline {
             }
             post {
                 failure {
-                    echo 'Error al construir la imagen Docker.'
+                    echo 'Error al construir la imagen Docker. Abortando pipeline.'
                     error 'Abortando pipeline.'
                 }
             }
@@ -153,7 +145,7 @@ pipeline {
             }
             post {
                 failure {
-                    echo 'Se detectaron vulnerabilidades HIGH/CRITICAL en la imagen Docker.'
+                    echo 'Se detectaron vulnerabilidades HIGH/CRITICAL en la imagen Docker. Abortando pipeline.'
                     error 'Abortando pipeline.'
                 }
             }
@@ -178,7 +170,7 @@ pipeline {
                     echo "Imagen ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG} subida correctamente."
                 }
                 failure {
-                    echo 'Error al subir la imagen al registry.'
+                    echo 'Error al subir la imagen al registry. Abortando pipeline.'
                     error 'Abortando pipeline.'
                 }
             }
@@ -195,7 +187,7 @@ pipeline {
             }
             post {
                 failure {
-                    echo 'Error al desplegar en Staging.'
+                    echo 'Error al desplegar en Staging. Abortando pipeline.'
                     error 'Abortando pipeline.'
                 }
             }
@@ -229,13 +221,12 @@ pipeline {
             cleanWs()
         }
         failure {
-            // Ajusta esta dirección a la tuya
             mail to: 'javiermorenog@gmail.com',
                  subject: "[Pipeline FALLIDO] ${JOB_NAME} #${BUILD_NUMBER}",
-                 body: "El build ha fallado en la etapa: ${STAGE_NAME}\nRevisar logs en Jenkins."
+                 body: "El build ha fallado en la etapa: ${STAGE_NAME}\nRevisa los logs en Jenkins."
         }
         success {
-            echo "Pipeline completado exitosamente. Imagen disponible en: ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "Pipeline completado. Imagen disponible en: ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}"
         }
     }
 }
