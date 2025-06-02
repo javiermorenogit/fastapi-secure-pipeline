@@ -121,11 +121,17 @@ stage('SAST (Sonar)') {
         }
 
         /* ---------- 6 · Trivy ---------- */
-        stage('Container Scan') {
-            agent { docker { image 'aquasec/trivy:latest' } }
-            steps { sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME' }
+stage('Container Scan') {
+    agent {
+        docker {
+            image 'aquasec/trivy:latest'
+            args  '--entrypoint=""'
         }
-
+    }
+    steps {
+        sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME'
+    }
+}
         /* ---------- 7 · Gitleaks ---------- */
         stage('Secrets Scan') {
             agent { docker { image 'zricethezav/gitleaks:latest' } }
