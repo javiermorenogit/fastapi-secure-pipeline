@@ -48,31 +48,26 @@ pipeline {
 
         /* ---------- 3 · Dependency-Check ---------- */
 stage('Dependency Scan') {
-  environment {
-    NVD_API_KEY = credentials('NVD_API_KEY')
-  }
   steps {
-    // Montamos todo el workspace en /src
     sh """
-      docker pull owasp/dependency-check:8.4.0
-
-      docker run --rm -u 0:0 \
-        -v \$WORKSPACE:/src \
+      docker run --rm \
+        -v \$WORKSPACE/app:/src \
         -v \$WORKSPACE/.dc-cache:/usr/share/dependency-check/data \
         -e NVD_API_KEY=\${NVD_API_KEY} \
         owasp/dependency-check:8.4.0 \
-        /usr/share/dependency-check/bin/dependency-check.sh \
-          --project fastapi-secure-pipeline \
-          --scan /src/app \
-          --out /src/reports/dep-check \
-          --format XML \
-          --prettyPrint \
-          --log /src/reports/dep-check/dc.log
+          /usr/share/dependency-check/bin/dependency-check.sh \
+            --project fastapi-secure-pipeline \
+            --scan /src \
+            --out /src/reports/dep-check \
+            --format XML \
+            --prettyPrint \
+            --log /src/reports/dep-check/dc.log
     """
-    // De esta forma, el XML queda realmente en <workspace>/reports/dep-check/
-    dependencyCheckPublisher // sin “pattern”, usa la ruta por defecto "reports/dep-check/*.xml"
+    // Aquí forzamos a que busque en app/reports/dep-check
+    dependencyCheckPublisher pattern: 'app/reports/dep-check/dependency-check-report.xml'
   }
 }
+
         /* ---------- 4 · SAST (Sonar) ---------- */
         stage('SAST (Sonar)') {
             agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
