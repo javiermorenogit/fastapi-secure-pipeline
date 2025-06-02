@@ -91,14 +91,14 @@ pipeline {
                 }
             }
             post {
-                always {
-                    dependencyCheckPublisher(
-                        pattern: 'reports/dep-check/dependency-check-report.xml',
-                        failedTotalCritical: 1,
-                        unstableTotalHigh: 5
-                    )
-                }
-            }
+     always {
+        dependencyCheckPublisher(
+            pattern: 'reports/dep-check/dependency-check-report.xml',
+            failedTotalCritical: 1,
+            unstableTotalHigh: 5
+        )
+     }
+ }
         }
 
         /* ---------- 4 · SAST (SonarCloud) ---------- */
