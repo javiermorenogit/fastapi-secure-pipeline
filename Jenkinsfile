@@ -133,17 +133,18 @@ pipeline {
         }
 
         /* ---------- 6 · Container Scan (Trivy) ---------- */
-        stage('Container Scan') {
-            agent {
-                docker {
-                    image 'aquasecurity/trivy:latest'
-                    args  '-u root -v /var/run/docker.sock:/var/run/docker.sock'
-                }
-            }
-            steps {
-                sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${IMAGE_NAME}"
-            }
-        }
+stage('Container Scan') {
+  steps {
+    sh '''
+      echo "▶️ Escaneando contenedor con Trivy..."
+      docker pull ghcr.io/aquasecurity/trivy:latest
+      docker run --rm \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        ghcr.io/aquasecurity/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL javiermorenogit/fastapi-secure-pipeline:51
+    '''
+  }
+}
+
 
         /* ---------- 7 · Secrets Scan (Gitleaks) ---------- */
         stage('Secrets Scan') {
