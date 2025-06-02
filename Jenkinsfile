@@ -116,18 +116,18 @@ stage('SAST (Sonar)') {
 
 
         /* ---------- 5 · Build image ---------- */
-        stage('Build Image') {
-            steps { sh 'docker build --no-cache -t $IMAGE_NAME .' }
-        }
+stage('Build Image') {
+  steps {
+    sh 'docker build --no-cache -t javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER} .'
+  }
+}
 
         /* ---------- 6 · Trivy ---------- */
 stage('Container Scan') {
-    agent {
-        docker {
-            image 'aquasec/trivy:latest'
-            args  '--entrypoint=""'
-        }
-    }
+  steps {
+    sh "trivy image --exit-code 1 --severity HIGH,CRITICAL javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
+  }
+}
     steps {
         sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_NAME'
     }
