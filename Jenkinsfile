@@ -119,11 +119,32 @@ pipeline {
         }
 
         /* ---------- 6 · Trivy ---------- */
-        stage('Container Scan') {
-            steps {
-                sh "trivy image --exit-code 1 --severity HIGH,CRITICAL javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
-            }
-        }
+  /* ---------- 6 · Trivy ---------- */
+- stage('Container Scan') {
+-   steps {
+-     sh "trivy image --exit-code 1 --severity HIGH,CRITICAL javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
+-   }
+- }
++ stage('Container Scan') {
++   agent {
++     docker {
++       image 'aquasec/trivy:0.60.0'
++       args  '-v /var/run/docker.sock:/var/run/docker.sock'
++     }
++   }
++   environment {
++     IMAGE_TO_SCAN = "javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
++   }
++   steps {
++     sh """
++       trivy image \
++         --exit-code 1 \
++         --severity HIGH,CRITICAL \
++         \$IMAGE_TO_SCAN
++     """
++   }
++ }
+
 
         /* ---------- 7 · Gitleaks ---------- */
         stage('Secrets Scan') {
