@@ -141,12 +141,24 @@ stage('Container Scan') {
 
 
         /* ---------- 7 · Gitleaks ---------- */
-        stage('Secrets Scan') {
-            agent { docker { image 'zricethezav/gitleaks:latest' } }
-            steps {
-                sh 'gitleaks detect --source . --exit-code 1'
-            }
+     /* ---------- 7 · Gitleaks ---------- */
+    stage('Secrets Scan') {
+        agent any
+        steps {
+            sh '''
+              # Bajamos la última versión de Gitleaks
+              docker pull zricethezav/gitleaks:latest
+
+              # Ejecutamos el escaneo montando el workspace
+              docker run --rm \
+                -v "$WORKSPACE":/workspace \
+                -w /workspace \
+                zricethezav/gitleaks:latest \
+                detect --source . --exit-code 1
+            '''
         }
+    }
+
 
         /* ---------- 8 · Push & Deploy ---------- */
         stage('Push & Deploy') {
