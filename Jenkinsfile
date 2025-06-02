@@ -1,5 +1,6 @@
 pipeline {
     agent any
+
     environment {
         IMAGE_NAME      = "javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
         DOCKER_BUILDKIT = '1'
@@ -10,6 +11,7 @@ pipeline {
         stage('Setup') {
             steps {
                 sh 'mkdir -p $WORKSPACE/.dc-cache'
+                sh 'mkdir -p $WORKSPACE/reports/dep-check'
             }
         }
 
@@ -67,33 +69,31 @@ pipeline {
             options {
                 timeout(time: 40, unit: 'MINUTES')
             }
-            stage('Dependency Scan') {
-  	steps {
-    		withEnv(["WORKSPACE=${env.WORKSPACE}"]) {
-      		sh """
-	        docker pull owasp/dependency-check:8.4.0
-	        docker run --rm -u 0:0 \\
-        	  -v ${WORKSPACE}/app:/src \\
-	          -v ${WORKSPACE}/.dc-cache:/usr/share/dependency-check/data \\
-        	  -v ${WORKSPACE}/reports/dep-check:/out \\
-	          -e NVD_API_KEY=${NVD_API_KEY} \\
-        	owasp/dependency-check:8.4.0 \\
-          	/usr/share/dependency-check/bin/dependency-check.sh \\
-            	--project fastapi-secure-pipeline \\
-            	--scan /src \\
-            	--out /out \\
-            	--format XML \\
-            	--prettyPrint \\
-            	--log /out/dc.log
-      		"""
-    		}
-    		// Luego, al llamar al publisher, usará el patrón por defecto **/dependency-check-report.xml
-    		dependencyCheckPublisher()
-		}
+            steps {
+                withEnv(["WORKSPACE=${env.WORKSPACE}"]) {
+                    sh """
+                        docker pull ${DC_IMAGE}
+
+                        docker run --rm -u 0:0 \\
+                          -v ${WORKSPACE}/app:/src \\
+                          -v ${DC_CACHE}:/usr/share/dependency-check/data \\
+                          -v ${WORKSPACE}/reports/dep-check:/out \\
+                          -e NVD_API_KEY=${NVD_API_KEY} \\
+                          ${DC_IMAGE} \\
+                          /usr/share/dependency-check/bin/dependency-check.sh \\
+                            --project fastapi-secure-pipeline \\
+                            --scan /src \\
+                            --out /out \\
+                            --format XML \\
+                            --prettyPrint \\
+                            --log /out/dc.log
+                    """
+                }
+            }
             post {
                 always {
                     dependencyCheckPublisher(
-                        pattern: 'app/reports/dep-check/dependency-check-report.xml',
+                        pattern: 'reports/dep-check/dependency-check-report.xml',
                         failedTotalCritical: 1,
                         unstableTotalHigh: 5
                     )
@@ -134,43 +134,44 @@ pipeline {
         }
 
         /* ---------- 6 · Container Scan (Trivy) ---------- */
-stage('Container Scan') {
-  steps {
-    sh '''
-      echo "▶️ Escaneando contenedor con Trivy..."
-      docker pull ghcr.io/aquasecurity/trivy:latest
-      docker run --rm \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        ghcr.io/aquasecurity/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL javiermorenogit/fastapi-secure-pipeline:51
-    '''
-  }
-}
+        stage('Container Scan') {
+            steps {
+                sh '''
+                  echo "▶️ Escaneando contenedor con Trivy..."
+                  docker pull ghcr.io/aquasecurity/trivy:latest
 
+                  docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    ghcr.io/aquasecurity/trivy:latest \
+                    image --exit-code 1 --severity HIGH,CRITICAL \
+                    ${IMAGE_NAME}
+                '''
+            }
+        }
 
         /* ---------- 7 · Secrets Scan (Gitleaks) ---------- */
-stage('Secrets Scan') {
-  agent {
-    docker {
-      image 'zricethezav/gitleaks:latest'
-      args  '--entrypoint=""'
-    }
-  }
-  steps {
-    sh '''
-      mkdir -p reports
-      gitleaks detect \
-        --source .  \
-        --report-format sarif \
-        --report-path reports/gitleaks.sarif
+        stage('Secrets Scan') {
+            agent {
+                docker {
+                    image 'zricethezav/gitleaks:latest'
+                    args  '--entrypoint=""'
+                }
+            }
+            steps {
+                sh '''
+                  mkdir -p reports
+                  gitleaks detect \
+                    --source .  \
+                    --report-format sarif \
+                    --report-path reports/gitleaks.sarif
 
-      gitleaks detect \
-        --source .   \
-        --report-format json \
-        --report-path reports/gitleaks.json
-    '''
-  }
-}
-
+                  gitleaks detect \
+                    --source .   \
+                    --report-format json \
+                    --report-path reports/gitleaks.json
+                '''
+            }
+        }
 
         /* ---------- 8 · Push & Deploy ---------- */
         stage('Push & Deploy') {
