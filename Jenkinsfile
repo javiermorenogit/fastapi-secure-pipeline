@@ -31,7 +31,7 @@ pipeline {
         stage('Lint') {
             agent {
                 docker {
-                    image 'python:3.11-slim'
+                    image 'python:3.12-alpine'
                     args  '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
                 }
             }
@@ -46,7 +46,7 @@ pipeline {
         stage('Unit Tests') {
             agent {
                 docker {
-                    image 'python:3.11-slim'
+                    image 'python:3.12-alpine'
                     args  '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
                 }
             }
