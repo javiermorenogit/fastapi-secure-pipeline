@@ -147,18 +147,23 @@ stage('Container Scan') {
 
 
         /* ---------- 7 · Secrets Scan (Gitleaks) ---------- */
-        stage('Secrets Scan') {
-            agent {
-                docker {
-                    image 'zricethezav/gitleaks:latest'
-                    args  '-u root'
-                }
-            }
-            steps {
-                sh 'gitleaks detect --source . --exit-code 1'
-            }
-        }
-
+stage('Secrets Scan') {
+  agent {
+    docker {
+      image 'zricethezav/gitleaks:latest'
+      args  '--entrypoint=""'
+    }
+  }
+  steps {
+    sh '''
+      mkdir -p reports
+      gitleaks detect \
+        --source . \
+        --report-format xml \
+        --report-path reports/gitleaks.xml
+    '''
+  }
+}
         /* ---------- 8 · Push & Deploy ---------- */
         stage('Push & Deploy') {
             when { branch 'main' }
