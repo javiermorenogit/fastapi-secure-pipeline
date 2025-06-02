@@ -1,48 +1,28 @@
-###############
-# Stage 1: build
-###############
-FROM python:3.12-slim AS builder
+# --------------------------------------------------
+# Dockerfile para tu aplicación FastAPI (runtime)
+# --------------------------------------------------
 
-WORKDIR /app
-
-# Instalo dependencias del sistema mínimas para compilar wheels
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc \
-  && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
-
-###############
-# Stage 2: runtime
-###############
 FROM python:3.11-slim
 
-# Crea usuario sin privilegios
+# 1) Creamos un usuario sin privilegios
 RUN adduser --disabled-password --gecos '' appuser
+
 USER appuser
 
+# 2) Aseguramos que ~/.local/bin esté en PATH
 ENV PATH=/home/appuser/.local/bin:$PATH
+
 WORKDIR /app
 
-# Copio paquetes instalados por el builder
-COPY --from=builder /root/.local /home/appuser/.local
+# 3) Copiamos requirements.txt y preinstalamos las dependencias en ~/.local
+COPY --chown=appuser:appuser requirements.txt .
+RUN python3 -m pip install --user --no-cache-dir -r requirements.txt
 
-# Copio solo el código necesario
-COPY app /app/app
-# Si tienes scripts o entrypoints:
-# COPY scripts/entrypoint.sh /app/
+# 4) Copiamos el código de la aplicación
+COPY --chown=appuser:appuser app /app/app
 
+# 5) Exponemos el puerto 8000 para uvicorn
 EXPOSE 8000
 
+# 6) Comando por defecto al arrancar el contenedor
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-# jenkins-docker/Dockerfile
-FROM jenkins/jenkins:lts-jdk17
-
-USER root
-RUN apt-get update -qq \
-    && apt-get install -y --no-install-recommends docker.io git curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && usermod -aG docker jenkins   # agrega el usuario jenkins al grupo docker
-USER jenkins

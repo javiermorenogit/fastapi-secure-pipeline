@@ -117,7 +117,7 @@ stage('SAST (Sonar)') {
 
         /* ---------- 5 · Build image ---------- */
         stage('Build Image') {
-            steps { sh 'docker build -t $IMAGE_NAME .' }
+            steps { sh 'docker build --no-cache -t $IMAGE_NAME .' }
         }
 
         /* ---------- 6 · Trivy ---------- */
