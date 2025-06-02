@@ -30,10 +30,19 @@ COPY --from=builder /root/.local /home/appuser/.local
 
 # Copio solo el código necesario
 COPY app /app/app
-COPY gunicorn_conf.py /app  # (si lo necesitas)
 # Si tienes scripts o entrypoints:
 # COPY scripts/entrypoint.sh /app/
 
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# jenkins-docker/Dockerfile
+FROM jenkins/jenkins:lts-jdk17
+
+USER root
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends docker.io git curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && usermod -aG docker jenkins   # agrega el usuario jenkins al grupo docker
+USER jenkins
