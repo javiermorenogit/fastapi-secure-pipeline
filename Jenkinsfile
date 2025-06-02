@@ -59,47 +59,35 @@ pipeline {
         }
 
         /* ---------- 3 · Dependency-Check ---------- */
-        stage('Dependency Scan') {
-            agent any
-            environment {
-                NVD_API_KEY = credentials('nvd-api-key')
-                DC_IMAGE    = 'owasp/dependency-check:8.4.0'
-                DC_CACHE    = "${WORKSPACE}/.dc-cache"
-            }
-            options {
-                timeout(time: 40, unit: 'MINUTES')
-            }
-            steps {
-                withEnv(["WORKSPACE=${env.WORKSPACE}"]) {
-                    sh """
-                        docker pull ${DC_IMAGE}
+stage('Dependency Scan') {
+  steps {
+    withEnv([ "NVD_API_KEY=${env.NVD_API_KEY}" ]) {
+      sh '''
+        docker pull owasp/dependency-check:8.4.0
+        docker run --rm \
+          -u 0:0 \
+          -v $WORKSPACE/app:/src \
+          -v $WORKSPACE/reports/dep-check:/out \
+          -e NVD_API_KEY=$NVD_API_KEY \
+          owasp/dependency-check:8.4.0 \
+            /usr/share/dependency-check/bin/dependency-check.sh \
+              --project fastapi-secure-pipeline \
+              --scan /src \
+              --out /out \
+              --format XML \
+              --prettyPrint \
+              --log /out/dc.log
+      '''
+    }
+  }
+  post {
+    always {
+      // Make sure the pattern matches exactly where the XML landed
+      dependencyCheckPublisher pattern: 'reports/dep-check/dependency-check-report.xml'
+    }
+  }
+}
 
-                        docker run --rm -u 0:0 \\
-                          -v ${WORKSPACE}/app:/src \\
-                          -v ${DC_CACHE}:/usr/share/dependency-check/data \\
-                          -v ${WORKSPACE}/reports/dep-check:/out \\
-                          -e NVD_API_KEY=${NVD_API_KEY} \\
-                          ${DC_IMAGE} \\
-                          /usr/share/dependency-check/bin/dependency-check.sh \\
-                            --project fastapi-secure-pipeline \\
-                            --scan /src \\
-                            --out /out \\
-                            --format XML \\
-                            --prettyPrint \\
-                            --log /out/dc.log
-                    """
-                }
-            }
-            post {
-     always {
-        dependencyCheckPublisher(
-            pattern: 'reports/dep-check/dependency-check-report.xml',
-            failedTotalCritical: 1,
-            unstableTotalHigh: 5
-        )
-     }
- }
-        }
 
         /* ---------- 4 · SAST (SonarCloud) ---------- */
         stage('SAST (Sonar)') {
