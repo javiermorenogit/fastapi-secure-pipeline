@@ -6,29 +6,41 @@ pipeline {
     }
 
     stages {
-        /* 0 · Cache */
+        /* ---------- 0 · Cache ---------- */
         stage('Setup') {
             steps {
                 sh 'mkdir -p $WORKSPACE/.dc-cache'
             }
         }
 
-        /* 1 · Lint */
+        /* ---------- 1 · Lint ---------- */
         stage('Lint') {
-            agent { docker { image 'python:3.11-slim'; args '-u root' } }
+            agent {
+                docker {
+                    image 'python:3.12-alpine'
+                    args  '-u root'
+                }
+            }
             steps {
                 sh '''
+                  apk add --no-cache gcc musl-dev
                   pip install --no-cache-dir ruff
                   ruff check app
                 '''
             }
         }
 
-        /* 2 · Unit Tests */
+        /* ---------- 2 · Unit Tests ---------- */
         stage('Unit Tests') {
-            agent { docker { image 'python:3.11-slim'; args '-u root' } }
+            agent {
+                docker {
+                    image 'python:3.12-alpine'
+                    args  '-u root'
+                }
+            }
             steps {
                 sh '''
+                  apk add --no-cache gcc musl-dev
                   pip install --no-cache-dir -r requirements.txt
                   pip install --no-cache-dir pytest pytest-cov
                   export PYTHONPATH=$(pwd)
@@ -44,7 +56,7 @@ pipeline {
             }
         }
 
-        /* 3 · Dependency-Check */
+        /* ---------- 3 · Dependency-Check ---------- */
         stage('Dependency Scan') {
             agent any
             environment {
@@ -60,6 +72,7 @@ pipeline {
                     set -e
                     echo "▶️  Pull image (si no la tienes)…"
                     docker pull "$DC_IMAGE"
+
                     echo "▶️  Ejecutando Dependency-Check…"
                     docker run --rm \
                       --entrypoint "" \
@@ -87,9 +100,14 @@ pipeline {
             }
         }
 
-        /* 4 · SAST (SonarCloud) */
+        /* ---------- 4 · SAST (SonarCloud) ---------- */
         stage('SAST (Sonar)') {
-            agent { docker { image 'sonarsource/sonar-scanner-cli:latest'; args '-u root' } }
+            agent {
+                docker {
+                    image 'sonarsource/sonar-scanner-cli:latest'
+                    args  '-u root'
+                }
+            }
             environment {
                 SONAR_HOST_URL = 'https://sonarcloud.io'
             }
@@ -107,14 +125,14 @@ pipeline {
             }
         }
 
-        /* 5 · Build Docker Image */
+        /* ---------- 5 · Build Docker Image ---------- */
         stage('Build Image') {
             steps {
-                sh 'docker build --no-cache -t javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER} .'
+                sh 'docker build --no-cache -t ${IMAGE_NAME} .'
             }
         }
 
-        /* 6 · Container Scan (Trivy dentro de contenedor) */
+        /* ---------- 6 · Container Scan (Trivy) ---------- */
         stage('Container Scan') {
             agent {
                 docker {
@@ -127,15 +145,20 @@ pipeline {
             }
         }
 
-        /* 7 · Secrets Scan (Gitleaks) */
+        /* ---------- 7 · Secrets Scan (Gitleaks) ---------- */
         stage('Secrets Scan') {
-            agent { docker { image 'zricethezav/gitleaks:latest'; args '-u root' } }
+            agent {
+                docker {
+                    image 'zricethezav/gitleaks:latest'
+                    args  '-u root'
+                }
+            }
             steps {
                 sh 'gitleaks detect --source . --exit-code 1'
             }
         }
 
-        /* 8 · Push & Deploy (solo main) */
+        /* ---------- 8 · Push & Deploy ---------- */
         stage('Push & Deploy') {
             when { branch 'main' }
             steps {
@@ -153,9 +176,7 @@ pipeline {
                     '''
                 }
                 withCredentials([string(credentialsId: 'railway-token', variable: 'RAILWAY_TOKEN')]) {
-                    sh '''
-                      scripts/deploy.sh "$RAILWAY_TOKEN"
-                    '''
+                    sh 'scripts/deploy.sh "$RAILWAY_TOKEN"'
                 }
             }
         }
