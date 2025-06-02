@@ -68,7 +68,7 @@ pipeline {
         stage('Dependency Scan') {
             steps {
                 // Aquí obtenemos las credenciales dentro de la etapa, no en environment
-                withCredentials([string(credentialsId: 'nvd-api-key-id', variable: 'NVD_API_KEY')]) {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
                     sh '''
                       docker run --rm --platform linux/amd64 \
                         -v "${WORKSPACE}/app":/src \
