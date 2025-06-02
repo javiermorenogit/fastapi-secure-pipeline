@@ -178,7 +178,7 @@ stage('Container Scan') {
                 usernameVariable: 'SMTP_USER',
                 passwordVariable: 'SMTP_PSW'
             ) ]) {
-                mail to: 'javiermoreng@gmail.com',
+                mail to: 'javiermorenog@gmail.com',
                      from: "${SMTP_USER}",
                      subject: "🚨 Build FAILED",
                      body: "Revisa logs: ${env.BUILD_URL}"
