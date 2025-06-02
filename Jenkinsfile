@@ -120,25 +120,24 @@ pipeline {
 
         /* ---------- 6 · Trivy ---------- */
   /* ---------- 6 · Trivy ---------- */
- stage('Container Scan') {
-   agent {
-     docker {
-       image 'aquasec/trivy:0.60.0'
-       args  '-v /var/run/docker.sock:/var/run/docker.sock'
-     }
-   }
-   environment {
-     IMAGE_TO_SCAN = "javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
-   }
-   steps {
-     sh """
-       trivy image \
-         --exit-code 1 \
-         --severity HIGH,CRITICAL \
-         \$IMAGE_TO_SCAN
-     """
-   }
- }
+stage('Container Scan') {
+    agent any
+    steps {
+        sh '''
+          # Traemos la última versión de Trivy
+          docker pull aquasec/trivy:0.60.0
+
+          # Ejecutamos el escaneo pasándole el socket de Docker
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.60.0 image \
+              --exit-code 1 \
+              --severity HIGH,CRITICAL \
+              javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}
+        '''
+    }
+}
+
 
 
         /* ---------- 7 · Gitleaks ---------- */
