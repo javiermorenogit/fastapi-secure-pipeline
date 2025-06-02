@@ -158,15 +158,18 @@ stage('Secrets Scan') {
     sh '''
       mkdir -p reports
       gitleaks detect \
-        --source . \
+        --source .  \
         --report-format sarif \
         --report-path reports/gitleaks.sarif
-        --source . \
+
+      gitleaks detect \
+        --source .   \
         --report-format json \
         --report-path reports/gitleaks.json
     '''
   }
 }
+
 
         /* ---------- 8 · Push & Deploy ---------- */
         stage('Push & Deploy') {
