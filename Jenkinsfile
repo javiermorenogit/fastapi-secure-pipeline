@@ -2,10 +2,7 @@ pipeline {
     agent any
 
     environment {
-        // Define aquí tu clave de NVD si la tienes configurada en Jenkins como 'nvd-api-key'
-        NVD_API_KEY = credentials('nvd-api-key')
-        // Define aquí tu token de SonarCloud si la tienes configurada en Jenkins como 'sonar-token'
-        SONAR_TOKEN  = credentials('sonar-token')
+        // Eliminamos la asignación directa de credenciales en este bloque
         DOCKER_REGISTRY = "docker.io"
         IMAGE_NAME      = "javiermorenogit/fastapi-secure-pipeline"
     }
@@ -70,21 +67,23 @@ pipeline {
 
         stage('Dependency Scan') {
             steps {
-                // Forzamos la plataforma linux/amd64 para evitar incompatibilidad ARM <-> AMD64
-                sh '''
-                  docker run --rm --platform linux/amd64 \
-                    -v "${WORKSPACE}/app":/src \
-                    -v "${WORKSPACE}/.dc-cache":/usr/share/dependency-check/data \
-                    -e NVD_API_KEY="${NVD_API_KEY}" \
-                    owasp/dependency-check:8.4.0 \
-                    /usr/share/dependency-check/bin/dependency-check.sh \
-                      --project fastapi-secure-pipeline \
-                      --scan /src \
-                      --out /src/reports/dep-check \
-                      --format XML \
-                      --prettyPrint \
-                      --log /src/reports/dep-check/dc.log
-                '''
+                // Aquí obtenemos las credenciales dentro de la etapa, no en environment
+                withCredentials([string(credentialsId: 'nvd-api-key-id', variable: 'NVD_API_KEY')]) {
+                    sh '''
+                      docker run --rm --platform linux/amd64 \
+                        -v "${WORKSPACE}/app":/src \
+                        -v "${WORKSPACE}/.dc-cache":/usr/share/dependency-check/data \
+                        -e NVD_API_KEY="${NVD_API_KEY}" \
+                        owasp/dependency-check:8.4.0 \
+                        /usr/share/dependency-check/bin/dependency-check.sh \
+                          --project fastapi-secure-pipeline \
+                          --scan /src \
+                          --out /src/reports/dep-check \
+                          --format XML \
+                          --prettyPrint \
+                          --log /src/reports/dep-check/dc.log
+                    '''
+                }
             }
             post {
                 always {
@@ -159,14 +158,15 @@ pipeline {
                       docker push ${IMAGE_NAME}:${BUILD_NUMBER}
                     '''
                 }
-                // Aquí añadir tu lógica de despliegue (por ejemplo, Kubernetes, Docker Swarm, etc.)
+                // Aquí añadir la lógica de despliegue necesaria
             }
         }
     }
 
     post {
         always {
-            cleanWs()
+            // deleteDir() funciona dentro de cualquier contexto de Pipeline
+            deleteDir()
         }
         success {
             echo 'Pipeline completado con éxito.'
