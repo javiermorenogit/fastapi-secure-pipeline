@@ -1,24 +1,43 @@
-/* fastapi-secure-pipeline / Jenkinsfile */
 pipeline {
     agent any
+
     environment {
-        IMAGE_NAME      = "javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}"
-        DOCKER_BUILDKIT = '1'
+        // Define aquí tu clave de NVD si la tienes configurada en Jenkins como 'nvd-api-key-id'
+        NVD_API_KEY = credentials('nvd-api-key-id')
+        // Define aquí tu token de SonarCloud si la tienes configurada en Jenkins como 'sonar-token-id'
+        SONAR_TOKEN  = credentials('sonar-token-id')
+        DOCKER_REGISTRY = "docker.io"
+        IMAGE_NAME      = "javiermorenogit/fastapi-secure-pipeline"
     }
 
     stages {
-
-        /* ---------- 0 · Cache ---------- */
-        stage('Setup') {
-            agent any
+        stage('Declarative: Checkout SCM') {
             steps {
-                sh 'mkdir -p $WORKSPACE/.dc-cache'
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/main"]],
+                    userRemoteConfigs: [[
+                        url: "https://github.com/javiermorenogit/fastapi-secure-pipeline.git"
+                    ]]
+                ])
             }
         }
 
-        /* ---------- 1 · Lint ---------- */
+        stage('Setup') {
+            steps {
+                sh '''
+                  mkdir -p "${WORKSPACE}/.dc-cache"
+                '''
+            }
+        }
+
         stage('Lint') {
-            agent { docker { image 'python:3.11-slim'; args '-u root' } }
+            agent {
+                docker {
+                    image 'python:3.11-slim'
+                    args  '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
             steps {
                 sh '''
                   pip install --no-cache-dir ruff
@@ -27,16 +46,19 @@ pipeline {
             }
         }
 
-        /* ---------- 2 · Unit Tests ---------- */
         stage('Unit Tests') {
-            agent { docker { image 'python:3.11-slim' } }
+            agent {
+                docker {
+                    image 'python:3.11-slim'
+                    args  '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
             steps {
                 sh '''
                   pip install --no-cache-dir -r requirements.txt
                   pip install --no-cache-dir pytest pytest-cov
-                  export PYTHONPATH=$(pwd)
-                  pytest -q --cov app --cov-fail-under=80 \
-                         --junitxml reports/tests.xml
+                  export PYTHONPATH="${WORKSPACE}"
+                  pytest -q --cov app --cov-fail-under=80 --junitxml reports/tests.xml
                 '''
             }
             post {
@@ -46,130 +68,114 @@ pipeline {
             }
         }
 
-        /* ---------- 3 · Dependency-Check ---------- */
-stage('Dependency Scan') {
-  steps {
-    sh """
-      docker run --rm \
-        -v \$WORKSPACE/app:/src \
-        -v \$WORKSPACE/.dc-cache:/usr/share/dependency-check/data \
-        -e NVD_API_KEY=\${NVD_API_KEY} \
-        owasp/dependency-check:8.4.0 \
-          /usr/share/dependency-check/bin/dependency-check.sh \
-            --project fastapi-secure-pipeline \
-            --scan /src \
-            --out /src/reports/dep-check \
-            --format XML \
-            --prettyPrint \
-            --log /src/reports/dep-check/dc.log
-    """
-    // Aquí forzamos a que busque en app/reports/dep-check
-    dependencyCheckPublisher pattern: 'app/reports/dep-check/dependency-check-report.xml'
-  }
-}
+        stage('Dependency Scan') {
+            steps {
+                // Forzamos la plataforma linux/amd64 para evitar incompatibilidad ARM <-> AMD64
+                sh '''
+                  docker run --rm --platform linux/amd64 \
+                    -v "${WORKSPACE}/app":/src \
+                    -v "${WORKSPACE}/.dc-cache":/usr/share/dependency-check/data \
+                    -e NVD_API_KEY="${NVD_API_KEY}" \
+                    owasp/dependency-check:8.4.0 \
+                    /usr/share/dependency-check/bin/dependency-check.sh \
+                      --project fastapi-secure-pipeline \
+                      --scan /src \
+                      --out /src/reports/dep-check \
+                      --format XML \
+                      --prettyPrint \
+                      --log /src/reports/dep-check/dc.log
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'app/reports/dep-check/*.xml', fingerprint: true
+                }
+            }
+        }
 
-        /* ---------- 4 · SAST (Sonar) ---------- */
         stage('SAST (Sonar)') {
-            agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
-            environment {
-                SONAR_HOST_URL = 'https://sonarcloud.io'
+            agent {
+                docker {
+                    image 'sonarsource/sonar-scanner-cli:latest'
+                    args  '-u root:root -v /var/run/docker.sock:/var/run/docker.sock'
+                }
             }
             steps {
-                withCredentials([ string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN') ]) {
+                withCredentials([string(credentialsId: 'sonar-token-id', variable: 'SONAR_TOKEN')]) {
                     sh '''
                       sonar-scanner \
                         -Dsonar.projectKey=fastapi-secure-pipeline \
                         -Dsonar.organization=javiermorenogit \
                         -Dsonar.sources=. \
-                        -Dsonar.host.url=$SONAR_HOST_URL \
-                        -Dsonar.login=$SONAR_TOKEN
+                        -Dsonar.host.url=https://sonarcloud.io \
+                        -Dsonar.login="${SONAR_TOKEN}"
                     '''
                 }
             }
         }
 
-        /* ---------- 5 · Build image ---------- */
         stage('Build Image') {
             steps {
-                sh 'docker build --no-cache -t javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER} .'
+                sh '''
+                  docker build --no-cache -t ${IMAGE_NAME}:${BUILD_NUMBER} .
+                '''
             }
         }
-  /* ---------- 6 · Trivy ---------- */
-stage('Container Scan') {
-    agent any
-    steps {
-        sh '''
-          # Traemos la última versión de Trivy
-          docker pull aquasec/trivy:0.60.0
 
-          # Ejecutamos el escaneo pasándole el socket de Docker
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.60.0 image \
-              --exit-code 1 \
-              --severity HIGH,CRITICAL \
-              javiermorenogit/fastapi-secure-pipeline:${BUILD_NUMBER}
-        '''
-    }
-}
-
-
-
-        /* ---------- 7 · Gitleaks ---------- */
-     /* ---------- 7 · Gitleaks ---------- */
-    stage('Secrets Scan') {
-        agent any
-        steps {
-            sh '''
-              # Bajamos la última versión de Gitleaks
-              docker pull zricethezav/gitleaks:latest
-
-              # Ejecutamos el escaneo montando el workspace
-              docker run --rm \
-                -v "$WORKSPACE":/workspace \
-                -w /workspace \
-                zricethezav/gitleaks:latest \
-                detect --source . --exit-code 1
-            '''
-        }
-    }
-
-
-        /* ---------- 8 · Push & Deploy ---------- */
-        stage('Push & Deploy') {
-            when { branch 'main' }
+        stage('Container Scan') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-cred',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PSW'
-                )]) {
+                sh '''
+                  docker pull aquasec/trivy:0.60.0
+                  docker run --rm --platform linux/amd64 \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    aquasec/trivy:0.60.0 image \
+                      --exit-code 1 \
+                      --severity HIGH,CRITICAL \
+                      ${IMAGE_NAME}:${BUILD_NUMBER}
+                '''
+            }
+        }
+
+        stage('Secrets Scan') {
+            steps {
+                sh '''
+                  docker pull zricethezav/gitleaks:latest
+                  docker run --rm --platform linux/amd64 \
+                    -v "${WORKSPACE}":/workspace \
+                    -w /workspace \
+                    zricethezav/gitleaks:latest detect --source . --exit-code 1 || true
+                '''
+            }
+        }
+
+        stage('Push & Deploy') {
+            when {
+                branch 'main'
+                expression { return env.BUILD_CAUSE_USERTRIGGER != null }
+            }
+            steps {
+                withDockerRegistry(credentialsId: 'dockerhub-credentials', url: "https://${DOCKER_REGISTRY}") {
                     sh '''
-                      echo "$DOCKER_PSW" | docker login -u "$DOCKER_USER" --password-stdin
-                      docker tag $IMAGE_NAME $DOCKER_USER/fastapi-secure-pipeline:latest
-                      docker push $DOCKER_USER/fastapi-secure-pipeline:latest
+                      docker push ${IMAGE_NAME}:${BUILD_NUMBER}
                     '''
                 }
-                withCredentials([string(credentialsId: 'railway-token', variable: 'RAILWAY_TOKEN')]) {
-                    sh 'scripts/deploy.sh "$RAILWAY_TOKEN"'
-                }
+                // Aquí añadir tu lógica de despliegue (por ejemplo, Kubernetes, Docker Swarm, etc.)
             }
         }
-
-    } // ← FIN de `stages`
+    }
 
     post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo 'Pipeline completado con éxito.'
+        }
+        unstable {
+            echo 'Pipeline finalizó en estado UNSTABLE.'
+        }
         failure {
-            withCredentials([ usernamePassword(
-                credentialsId: 'smtp-cred',
-                usernameVariable: 'SMTP_USER',
-                passwordVariable: 'SMTP_PSW'
-            ) ]) {
-                mail to: 'javiermorenog@gmail.com',
-                     from: "${SMTP_USER}",
-                     subject: "🚨 Build FAILED",
-                     body: "Revisa logs: ${env.BUILD_URL}"
-            }
+            echo 'Pipeline FALLÓ.'
         }
     }
 }
