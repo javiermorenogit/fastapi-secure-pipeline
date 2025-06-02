@@ -67,28 +67,31 @@ pipeline {
             options {
                 timeout(time: 40, unit: 'MINUTES')
             }
-            steps {
-                sh '''
-                    set -e
-                    echo "▶️  Pull image (si no la tienes)…"
-                    docker pull "$DC_IMAGE"
+            stage('Dependency Scan') {
+  steps {
+    withEnv(["WORKSPACE=${env.WORKSPACE}"]) {
+      sh """
+        docker pull owasp/dependency-check:8.4.0
 
-                    echo "▶️  Ejecutando Dependency-Check…"
-                    docker run --rm \
-                      --entrypoint "" \
-                      -u 0:0 \
-                      -v "$WORKSPACE/app":/src \
-                      -v "$DC_CACHE":/usr/share/dependency-check/data \
-                      -e NVD_API_KEY="$NVD_API_KEY" \
-                      "$DC_IMAGE" \
-                      /usr/share/dependency-check/bin/dependency-check.sh \
-                        --project fastapi-secure-pipeline \
-                        --scan /src \
-                        --out /src/reports/dep-check \
-                        --format XML --prettyPrint \
-                        --log /src/reports/dep-check/dc.log
-                '''
-            }
+        docker run --rm -u 0:0 \\
+          -v ${WORKSPACE}/app:/src \\
+          -v ${WORKSPACE}/.dc-cache:/usr/share/dependency-check/data \\
+          -v ${WORKSPACE}/reports/dep-check:/out \\
+          -e NVD_API_KEY=${NVD_API_KEY} \\
+          owasp/dependency-check:8.4.0 \\
+          /usr/share/dependency-check/bin/dependency-check.sh \\
+            --project fastapi-secure-pipeline \\
+            --scan /src \\
+            --out /out \\
+            --format XML \\
+            --prettyPrint \\
+            --log /out/dc.log
+      """
+    }
+    // Luego, al llamar al publisher, usará el patrón por defecto **/dependency-check-report.xml
+    dependencyCheckPublisher()
+  }
+}
             post {
                 always {
                     dependencyCheckPublisher(
