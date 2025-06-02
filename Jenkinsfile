@@ -47,54 +47,14 @@ pipeline {
         }
 
         /* ---------- 3 · Dependency-Check ---------- */
- stage('Dependency Scan') {
-     agent any
-     environment {
-         NVD_API_KEY = credentials('nvd-api-key')
-         DC_IMAGE    = 'owasp/dependency-check:8.4.0'
-         DC_CACHE    = "${WORKSPACE}/.dc-cache"
-     }
-     options {
-         timeout(time: 40, unit: 'MINUTES')
-     }
-     steps {
-        sh '''
-          set -e
+ 
+stage('Dependency Scan') {
+  steps {
+    // … your existing `docker run dependency-check.sh … --out /src/reports/dep-check …` …
 
-          # Nos aseguramos de que existe la carpeta destino
-          mkdir -p app/reports/dep-check
-
-          echo "▶️  Pull image (si no la tienes)…"
-          docker pull "$DC_IMAGE"
-
-          echo "▶️  Ejecutando Dependency-Check…"
-          docker run --rm \
-            --entrypoint "" \
-            -u 0:0 \
-            -v "$WORKSPACE/app":/src \
-            -v "$DC_CACHE":/usr/share/dependency-check/data \
-            -e NVD_API_KEY="$NVD_API_KEY" \
-            "$DC_IMAGE" \
-            /usr/share/dependency-check/bin/dependency-check.sh \
-              --project fastapi-secure-pipeline \
-              --scan /src \
-              --out /src/reports/dep-check \
-              --format XML --prettyPrint \
-              --log /src/reports/dep-check/dc.log
-        '''
-     }
-     post {
-         always {
-             dependencyCheckPublisher(
-                 pattern: 'app/reports/dep-check/dependency-check-report.xml',
-                 failedTotalCritical: 1,
-                 unstableTotalHigh: 5
-             )
-         }
-     }
- }
-
-
+    dependencyCheckPublisher pattern: 'app/reports/dep-check/dependency-check-report.xml'
+  }
+}
         /* ---------- 4 · SAST (Sonar) ---------- */
         stage('SAST (Sonar)') {
             agent { docker { image 'sonarsource/sonar-scanner-cli:latest' } }
