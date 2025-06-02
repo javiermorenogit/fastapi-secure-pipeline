@@ -15,7 +15,7 @@ pipeline {
         DC_DATA_DIR        = "${HOME}/.dependency-check-data"
         DEP_CHECK_REPORT   = "reports/dependency-check.xml"
 
-        // “BUILD_M2_CACHE” apuntará a una carpeta .m2 dentro del workspace
+        // Caché de Maven dentro del workspace (evita el error de “Mounts denied”)
         BUILD_M2_CACHE     = "${env.WORKSPACE}/.m2"
     }
 
@@ -27,10 +27,9 @@ pipeline {
         }
 
         stage('Build & Unit Tests') {
-            /* 
-               Cambiamos el volumen -v para apuntar a BUILD_M2_CACHE,
-               que a su vez está dentro de ${WORKSPACE}, para que Docker
-               no intente montar /root/.m2 del host y provoque error de “Mounts denied”.
+            /*
+              Usamos Maven dentro de un contenedor y apuntamos el repositorio local a BUILD_M2_CACHE,
+              que está dentro del WORKSPACE, para evitar montar /root/.m2 del host.
             */
             agent {
                 docker {
@@ -39,26 +38,27 @@ pipeline {
                 }
             }
             steps {
-                script {
-                    // Obtenemos SonarScanner dentro de un node para que 'tool()' se resuelva
-                    SONAR_SCANNER_HOME = tool name: 'SonarQubeScanner', type: 'hudson.plugins.sonar.SonarRunnerInstallation'
-                }
-                // Asegurarnos de que exista la carpeta .m2 dentro de workspace antes de usarla
+                // Crear la carpeta de caché de Maven antes de montarla
                 sh "mkdir -p ${BUILD_M2_CACHE}"
+
+                // Invocar Maven: pruebas + Sonar (usando el plugin sonar:sonar incluido en Maven)
                 sh """
                    mvn clean verify sonar:sonar \
                      -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
                      -Dsonar.host.url=${SONAR_HOST_URL} \
                      -Dsonar.login=${SONAR_CREDENTIALS} \
-                     -Dsonar.scanner.home=${SONAR_SCANNER_HOME} \
                      -Dmaven.repo.local=/root/.m2
                 """
+
+                // Publicar resultados de JUnit
                 junit 'target/surefire-reports/*.xml'
                 archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             }
             post {
                 always {
-                    jacoco execPattern: 'target/jacoco.exec', classPattern: 'target/classes', sourcePattern: 'src/main/java'
+                    // Si usas Jacoco, puedes publicar el reporte (requiere plugin Jacoco en Jenkins)
+                    recordCoverage tools: [jacoco(configMode: 'DEFAULT')], 
+                                   sourceFileResolver: sourceFiles('**/src/main/java')
                 }
                 failure {
                     echo 'Error en Build o pruebas unitarias. Abortando pipeline.'
@@ -69,7 +69,6 @@ pipeline {
         stage('Dependency Scan') {
             steps {
                 script {
-                    // Asegurarnos de que el directorio de caché exista
                     sh "mkdir -p ${DC_DATA_DIR}"
                 }
                 timeout(time: 15, unit: 'MINUTES') {
@@ -91,13 +90,12 @@ pipeline {
                         """
                     }
                 }
-                // Publicar el reporte en Jenkins (plugin Dependency-Check Publisher)
                 dependencyCheckPublisher pattern: "${DEP_CHECK_REPORT}"
             }
             post {
                 aborted {
-                    echo "Stage ‘Dependency Scan’ abortado por timeout. Verifica que el caché existe y/o aumenta el timeout."
-                    error "Timeout de 15 minutos en Dependency Scan."
+                    echo "Stage ‘Dependency Scan’ abortado por timeout. Aumenta el timeout si es necesario."
+                    error "Timeout en Dependency Scan."
                 }
                 unsuccessful {
                     echo 'Se encontraron vulnerabilidades HIGH/CRITICAL en dependencias.'
@@ -108,7 +106,6 @@ pipeline {
 
         stage('Secrets Scan') {
             steps {
-                // Ejecutamos Gitleaks para buscar secretos expuestos
                 sh """
                    docker run --rm \
                      -v ${env.WORKSPACE}:/workspace \
@@ -232,7 +229,7 @@ pipeline {
             cleanWs()
         }
         failure {
-            // Asegúrate de configurar bien tu SMTP en Jenkins para que este mail funcione
+            // Ajusta esta dirección a la tuya
             mail to: 'javiermorenog@gmail.com',
                  subject: "[Pipeline FALLIDO] ${JOB_NAME} #${BUILD_NUMBER}",
                  body: "El build ha fallado en la etapa: ${STAGE_NAME}\nRevisar logs en Jenkins."
