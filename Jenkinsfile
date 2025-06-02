@@ -12,7 +12,7 @@ pipeline {
         SONAR_CREDENTIALS  = "sonar-token-credentials-id"
 
         // Dependency-Check: directorio local donde vive el caché
-        DC_DATA_DIR        = "${HOME}/.dependency-check-data" 
+        DC_DATA_DIR        = "${HOME}/.dependency-check-data"
         DEP_CHECK_REPORT   = "reports/dependency-check.xml"
 
         // SonarScanner (instalado en Jenkins → Global Tool Config)
@@ -35,7 +35,6 @@ pipeline {
                 }
             }
             steps {
-                // Compilar + pruebas unitarias + SonarQube
                 sh 'mvn clean verify sonar:sonar ' +
                    "-Dsonar.projectKey=${SONAR_PROJECT_KEY} " +
                    "-Dsonar.host.url=${SONAR_HOST_URL} " +
@@ -62,31 +61,30 @@ pipeline {
                 }
                 // Establecer un timeout de 15 minutos para la descarga/escaneo
                 timeout(time: 15, unit: 'MINUTES') {
-                    // Cargar el NVD API KEY desde Credenciales Jenkins
                     withCredentials([string(credentialsId: 'nvd-api-key-id', variable: 'NVD_API_KEY')]) {
+                        // Aquí reemplazamos ${PWD} por ${env.WORKSPACE}
                         sh """
                            docker pull owasp/dependency-check:8.4.0 || true
 
-                           docker run --rm \
-                             -v ${PWD}:/src \
-                             -v ${DC_DATA_DIR}:/usr/share/dependency-check/data \
-                             -e NVD_API_KEY=${NVD_API_KEY} \
-                             owasp/dependency-check:8.4.0 \
-                             --project "${IMAGE_NAME}" \
-                             --scan /src \
-                             --format XML \
-                             --out /src/${DEP_CHECK_REPORT} \
-                             --prettyPrint \
+                           docker run --rm \\
+                             -v ${env.WORKSPACE}:/src \\
+                             -v ${DC_DATA_DIR}:/usr/share/dependency-check/data \\
+                             -e NVD_API_KEY=${NVD_API_KEY} \\
+                             owasp/dependency-check:8.4.0 \\
+                             --project "${IMAGE_NAME}" \\
+                             --scan /src \\
+                             --format XML \\
+                             --out /src/${DEP_CHECK_REPORT} \\
+                             --prettyPrint \\
                              --log /src/reports/dep-check/dc.log
                         """
                     }
                 }
-                // Publicar el reporte en Jenkins (asegúrate de tener instalado el plugin Dependency-Check Publisher)
+                // Publicar el reporte en Jenkins (plugin Dependency-Check Publisher)
                 dependencyCheckPublisher pattern: "${DEP_CHECK_REPORT}"
             }
             post {
                 aborted {
-                    // Si el timeout se cumple, avisar que hay que revisar el caché o el tiempo asignado
                     echo "Stage ‘Dependency Scan’ abortado por timeout. Verifica que el caché exista y/o aumenta el timeout si es necesario."
                     error "Tiempo máximo de 15 minutos alcanzado en Dependency Scan."
                 }
@@ -100,10 +98,11 @@ pipeline {
         stage('Secrets Scan') {
             agent { label 'docker' }
             steps {
+                // Ejecutamos Gitleaks para buscar secretos expuestos
                 sh """
-                   docker run --rm \
-                     -v ${PWD}:/workspace \
-                     zricethezav/gitleaks:latest \
+                   docker run --rm \\
+                     -v ${env.WORKSPACE}:/workspace \\
+                     zricethezav/gitleaks:latest \\
                      detect --source /workspace --exit-code 1
                 """
             }
@@ -139,11 +138,11 @@ pipeline {
             steps {
                 sh """
                    docker pull aquasec/trivy:0.60.0 || true
-                   docker run --rm \
-                     -v /var/run/docker.sock:/var/run/docker.sock \
-                     aquasec/trivy:0.60.0 image \
-                     --exit-code 1 \
-                     --severity HIGH,CRITICAL \
+                   docker run --rm \\
+                     -v /var/run/docker.sock:/var/run/docker.sock \\
+                     aquasec/trivy:0.60.0 image \\
+                     --exit-code 1 \\
+                     --severity HIGH,CRITICAL \\
                      ${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}
                 """
             }
@@ -159,8 +158,8 @@ pipeline {
             agent { label 'docker' }
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'docker-registry-credentials', 
-                    usernameVariable: 'DOCKER_USER', 
+                    credentialsId: 'docker-registry-credentials',
+                    usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh """
@@ -185,8 +184,8 @@ pipeline {
             agent { label 'docker' }
             steps {
                 sh """
-                   kubectl set image deployment/${IMAGE_NAME}-staging \
-                     ${IMAGE_NAME}=${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG} \
+                   kubectl set image deployment/${IMAGE_NAME}-staging \\
+                     ${IMAGE_NAME}=${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG} \\
                      --namespace=staging
                    kubectl rollout status deployment/${IMAGE_NAME}-staging --namespace=staging
                 """
@@ -206,10 +205,10 @@ pipeline {
             }
             steps {
                 sh """
-                   docker run --rm \
-                     -v $(pwd)/zap-report:/zap/wrk \
-                     owasp/zap2docker-stable zap-full-scan.py \
-                     -t http://staging.mi-dominio.com:80/ \
+                   docker run --rm \\
+                     -v ${env.WORKSPACE}/zap-report:/zap/wrk \\
+                     owasp/zap2docker-stable zap-full-scan.py \\
+                     -t http://staging.mi-dominio.com:80/ \\
                      -r zap_report.html
                 """
                 archiveArtifacts artifacts: 'zap-report/zap_report.html', fingerprint: true
